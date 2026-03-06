@@ -1,0 +1,4 @@
+CUDA_VISIBLE_DEVICES=0 python test_real.py   --dat /root/shared-nvme/MDE-SpikingCamera/Outdoor-Spike \
+  --model /root/shared-nvme/MDE-SpikingCamera/s2d_weight/debug_A100_SpikeTransformerUNetConv_LocalGlobal-Swin3D-T/model_best.pth.tar  \
+   --config /root/shared-nvme/MDE-SpikingCamera/s2d_weight/debug_A100_SpikeTransformerUNetConv_LocalGlobal-Swin3D-T/config.json  \
+    --output_path /root/shared-nvme/MDE-SpikingCamera/output/real_test_results

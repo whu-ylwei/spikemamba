@@ -1,0 +1,25 @@
+# Datasets
+DENSE-spike/
+DENSE-smoke/
+
+# Environments
+.venv/
+venv/
+
+# Training artifacts
+output1/
+logs/
+s2d_checkpoints/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+
+# Large binaries
+*.whl
+*.filepart
+*.pth.tar
