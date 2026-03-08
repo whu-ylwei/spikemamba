@@ -35,6 +35,40 @@ CUDA_VISIBLE_DEVICES=0 python evaluation_DENSE.py --target_dataset .../ground_tr
 ## Environment
 To help successfully run the code, the esstential environment on Linux is included in the `requirements.txt`.
 
+## Mamba-SSM Backend Setup
+
+The 3D encoder now supports `mamba_ssm` as the Mamba core backend.
+
+1. Install dependencies:
+
+```bash
+pip install -r requirements.server.txt
+pip install mamba-ssm causal-conv1d
+```
+
+2. Configure `config["model"]`:
+
+```json
+{
+  "mamba_backend": "mamba_ssm",
+  "mamba_require_ssm": true,
+  "mamba_d_state": 16,
+  "mamba_d_conv": 4,
+  "mamba_expand": 2
+}
+```
+
+3. If installation fails because of torch/cuda mismatch, set:
+
+```json
+{
+  "mamba_backend": "fallback",
+  "mamba_require_ssm": false
+}
+```
+
+Then train normally and switch back to `mamba_ssm` after fixing the environment.
+
 
 
 ## Acknowledgement

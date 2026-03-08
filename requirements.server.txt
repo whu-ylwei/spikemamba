@@ -54,6 +54,9 @@ tifffile
 toml
 torch
 torchvision
+mamba-ssm
+causal-conv1d
+transformers<5
 tqdm
 typed-ast
 typing_extensions

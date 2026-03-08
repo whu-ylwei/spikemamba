@@ -98,6 +98,11 @@
         "swin_out_indices": [0,1,2],
         "swin_patch_size": [32,2,2],
         "ape": true,
+        "mamba_backend": "mamba_ssm",
+        "mamba_require_ssm": false,
+        "mamba_d_state": 16,
+        "mamba_d_conv": 4,
+        "mamba_expand": 2,
         "new_v": 4,
         "output_activation": "identity"
     }

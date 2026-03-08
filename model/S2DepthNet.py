@@ -19,6 +19,14 @@ def identity(x1, x2=None):
     return x1
 
 
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "y", "on")
+    return bool(value)
+
+
 
 class S2DepthTransformerUNetConv(BaseERGB2Depth):
     def __init__(self, config):
@@ -35,6 +43,11 @@ class S2DepthTransformerUNetConv(BaseERGB2Depth):
             self.num_v = config["new_v"]
         except KeyError:
             self.num_v = 0
+        self.mamba_backend = str(config.get("mamba_backend", "mamba_ssm"))
+        self.mamba_d_state = int(config.get("mamba_d_state", 16))
+        self.mamba_d_conv = int(config.get("mamba_d_conv", 4))
+        self.mamba_expand = int(config.get("mamba_expand", 2))
+        self.mamba_require_ssm = _as_bool(config.get("mamba_require_ssm", False))
 
         self.max_num_channels = self.base_num_channels * pow(2, self.num_encoders-1)
         output_activation = str(config.get("output_activation", "identity")).lower()
@@ -65,6 +78,11 @@ class S2DepthTransformerUNetConv(BaseERGB2Depth):
             num_heads=self.num_heads,
             out_indices=self.out_indices,
             new_version=self.num_v,
+            mamba_backend=self.mamba_backend,
+            mamba_d_state=self.mamba_d_state,
+            mamba_d_conv=self.mamba_d_conv,
+            mamba_expand=self.mamba_expand,
+            mamba_require_ssm=self.mamba_require_ssm,
         )
 
         self.UpsampleLayer = UpsampleConvLayer

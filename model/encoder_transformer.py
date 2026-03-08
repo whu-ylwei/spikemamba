@@ -17,6 +17,11 @@ class LongSpikeStreamEncoderConv(nn.Module):
         out_indices=(0, 1, 2),
         frozen_stages=-1,
         new_version=3,
+        mamba_backend="mamba_ssm",
+        mamba_d_state=16,
+        mamba_d_conv=4,
+        mamba_expand=2,
+        mamba_require_ssm=False,
     ):
         super(LongSpikeStreamEncoderConv, self).__init__()
 
@@ -42,6 +47,11 @@ class LongSpikeStreamEncoderConv(nn.Module):
             embed_dim=self.embed_dim,
             depths=self.depths,
             out_indices=self.out_indices,
+            mamba_backend=mamba_backend,
+            mamba_d_state=mamba_d_state,
+            mamba_d_conv=mamba_d_conv,
+            mamba_expand=mamba_expand,
+            mamba_require_ssm=mamba_require_ssm,
         )
 
         self.patches_T = self.num_blocks
