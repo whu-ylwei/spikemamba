@@ -1,0 +1,2 @@
+date_utc,run_name,checkpoint_epoch,backend,eval_script,clip_distance,abs_rel_down,sq_rel_down,rms_log_down,si_log_down,delta_1_25_up,delta_1_25_2_up,delta_1_25_3_up
+2026-03-07,test_mambassm_best_20260307_sys,28,mamba_ssm,evaluation_DENSE.py,1000,0.859811,24.809093,0.851177,0.480538,0.514184,0.654808,0.741500
