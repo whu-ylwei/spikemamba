@@ -1,0 +1,23 @@
+Setting up Multi Scale Gradient loss...
+Done
+Found 5 samples in /root/shared-nvme/spikemamba/DENSE-spike/DENSE/train
+Traceback (most recent call last):
+  File "/root/shared-nvme/spikemamba/train_parallel.py", line 356, in <module>
+    main()
+  File "/root/shared-nvme/spikemamba/train_parallel.py", line 352, in main
+    main_worker(args.gpu, ngpus_per_node, args)
+  File "/root/shared-nvme/spikemamba/train_parallel.py", line 188, in main_worker
+    train_dataset = concatenate_subfolders(join(args.datafolder, base_folder['train']),
+  File "/root/shared-nvme/spikemamba/train_parallel.py", line 81, in concatenate_subfolders
+    train_datasets.append(eval(dataset_type)(base_folder=join(base_folder, dataset_name),
+  File "/root/shared-nvme/spikemamba/data_loader/SpikesDENSE_dataset.py", line 44, in __init__
+    self.dataset = SynchronizedFramesSpikesDENSEDataset(base_folder, spike_folder, depth_folder, frame_folder,
+  File "/root/shared-nvme/spikemamba/data_loader/SpikesDENSE_dataset.py", line 154, in __init__
+    self.spike_dataset = VoxelGridDENSESpikeDataset(base_folder, spike_folder,
+  File "/root/shared-nvme/spikemamba/data_loader/spike_dataset.py", line 33, in __init__
+    self.read_timestamps()
+  File "/root/shared-nvme/spikemamba/data_loader/spike_dataset.py", line 54, in read_timestamps
+    assert(np.alltrue(np.diff(self.stamps) > 0)), "timestamps are not unique and monotonically increasing"
+  File "/root/.conda/envs/spikemamba/lib/python3.9/site-packages/numpy/__init__.py", line 397, in __getattr__
+    raise AttributeError(
+AttributeError: `np.alltrue` was removed in the NumPy 2.0 release. Use `np.all` instead.

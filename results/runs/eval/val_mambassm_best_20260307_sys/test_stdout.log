@@ -1,0 +1,256 @@
+Setting up Multi Scale Gradient loss...
+Done
+AttributeError: module 'numpy._globals' has no attribute '_signature_descriptor'
+Will write images to: /root/shared-nvme/spikemamba/logs/val_mambassm_best_20260307_sys/depth
+Found 1 samples in /root/shared-nvme/spikemamba/DENSE-spike/DENSE/validation
+-----  [3, 6, 12]
+Trainable parameters: 22568833
+S2DepthTransformerUNetConv(
+  (encoder): LongSpikeStreamEncoderConv(
+    (backbone): Mamba3DEncoder(
+      (patch_embed): Conv3d(1, 96, kernel_size=(32, 2, 2), stride=(32, 2, 2))
+      (stages): ModuleList(
+        (0): MambaStage(
+          (blocks): Sequential(
+            (0): ST_Mamba_Block(
+              (norm1): LayerNorm((96,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=96, out_features=384, bias=False)
+                (conv1d): Conv1d(192, 192, kernel_size=(4,), stride=(1,), padding=(3,), groups=192)
+                (act): SiLU()
+                (x_proj): Linear(in_features=192, out_features=38, bias=False)
+                (dt_proj): Linear(in_features=6, out_features=192, bias=True)
+                (out_proj): Linear(in_features=192, out_features=96, bias=False)
+              )
+              (norm2): LayerNorm((96,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=96, out_features=384, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=384, out_features=96, bias=True)
+              )
+            )
+            (1): ST_Mamba_Block(
+              (norm1): LayerNorm((96,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=96, out_features=384, bias=False)
+                (conv1d): Conv1d(192, 192, kernel_size=(4,), stride=(1,), padding=(3,), groups=192)
+                (act): SiLU()
+                (x_proj): Linear(in_features=192, out_features=38, bias=False)
+                (dt_proj): Linear(in_features=6, out_features=192, bias=True)
+                (out_proj): Linear(in_features=192, out_features=96, bias=False)
+              )
+              (norm2): LayerNorm((96,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=96, out_features=384, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=384, out_features=96, bias=True)
+              )
+            )
+          )
+        )
+        (1): MambaStage(
+          (blocks): Sequential(
+            (0): ST_Mamba_Block(
+              (norm1): LayerNorm((192,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=192, out_features=768, bias=False)
+                (conv1d): Conv1d(384, 384, kernel_size=(4,), stride=(1,), padding=(3,), groups=384)
+                (act): SiLU()
+                (x_proj): Linear(in_features=384, out_features=44, bias=False)
+                (dt_proj): Linear(in_features=12, out_features=384, bias=True)
+                (out_proj): Linear(in_features=384, out_features=192, bias=False)
+              )
+              (norm2): LayerNorm((192,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=192, out_features=768, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=768, out_features=192, bias=True)
+              )
+            )
+            (1): ST_Mamba_Block(
+              (norm1): LayerNorm((192,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=192, out_features=768, bias=False)
+                (conv1d): Conv1d(384, 384, kernel_size=(4,), stride=(1,), padding=(3,), groups=384)
+                (act): SiLU()
+                (x_proj): Linear(in_features=384, out_features=44, bias=False)
+                (dt_proj): Linear(in_features=12, out_features=384, bias=True)
+                (out_proj): Linear(in_features=384, out_features=192, bias=False)
+              )
+              (norm2): LayerNorm((192,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=192, out_features=768, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=768, out_features=192, bias=True)
+              )
+            )
+          )
+        )
+        (2): MambaStage(
+          (blocks): Sequential(
+            (0): ST_Mamba_Block(
+              (norm1): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=384, out_features=1536, bias=False)
+                (conv1d): Conv1d(768, 768, kernel_size=(4,), stride=(1,), padding=(3,), groups=768)
+                (act): SiLU()
+                (x_proj): Linear(in_features=768, out_features=56, bias=False)
+                (dt_proj): Linear(in_features=24, out_features=768, bias=True)
+                (out_proj): Linear(in_features=768, out_features=384, bias=False)
+              )
+              (norm2): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=384, out_features=1536, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=1536, out_features=384, bias=True)
+              )
+            )
+            (1): ST_Mamba_Block(
+              (norm1): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=384, out_features=1536, bias=False)
+                (conv1d): Conv1d(768, 768, kernel_size=(4,), stride=(1,), padding=(3,), groups=768)
+                (act): SiLU()
+                (x_proj): Linear(in_features=768, out_features=56, bias=False)
+                (dt_proj): Linear(in_features=24, out_features=768, bias=True)
+                (out_proj): Linear(in_features=768, out_features=384, bias=False)
+              )
+              (norm2): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=384, out_features=1536, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=1536, out_features=384, bias=True)
+              )
+            )
+            (2): ST_Mamba_Block(
+              (norm1): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=384, out_features=1536, bias=False)
+                (conv1d): Conv1d(768, 768, kernel_size=(4,), stride=(1,), padding=(3,), groups=768)
+                (act): SiLU()
+                (x_proj): Linear(in_features=768, out_features=56, bias=False)
+                (dt_proj): Linear(in_features=24, out_features=768, bias=True)
+                (out_proj): Linear(in_features=768, out_features=384, bias=False)
+              )
+              (norm2): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=384, out_features=1536, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=1536, out_features=384, bias=True)
+              )
+            )
+            (3): ST_Mamba_Block(
+              (norm1): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=384, out_features=1536, bias=False)
+                (conv1d): Conv1d(768, 768, kernel_size=(4,), stride=(1,), padding=(3,), groups=768)
+                (act): SiLU()
+                (x_proj): Linear(in_features=768, out_features=56, bias=False)
+                (dt_proj): Linear(in_features=24, out_features=768, bias=True)
+                (out_proj): Linear(in_features=768, out_features=384, bias=False)
+              )
+              (norm2): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=384, out_features=1536, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=1536, out_features=384, bias=True)
+              )
+            )
+            (4): ST_Mamba_Block(
+              (norm1): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=384, out_features=1536, bias=False)
+                (conv1d): Conv1d(768, 768, kernel_size=(4,), stride=(1,), padding=(3,), groups=768)
+                (act): SiLU()
+                (x_proj): Linear(in_features=768, out_features=56, bias=False)
+                (dt_proj): Linear(in_features=24, out_features=768, bias=True)
+                (out_proj): Linear(in_features=768, out_features=384, bias=False)
+              )
+              (norm2): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=384, out_features=1536, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=1536, out_features=384, bias=True)
+              )
+            )
+            (5): ST_Mamba_Block(
+              (norm1): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mamba): Mamba(
+                (in_proj): Linear(in_features=384, out_features=1536, bias=False)
+                (conv1d): Conv1d(768, 768, kernel_size=(4,), stride=(1,), padding=(3,), groups=768)
+                (act): SiLU()
+                (x_proj): Linear(in_features=768, out_features=56, bias=False)
+                (dt_proj): Linear(in_features=24, out_features=768, bias=True)
+                (out_proj): Linear(in_features=768, out_features=384, bias=False)
+              )
+              (norm2): LayerNorm((384,), eps=1e-05, elementwise_affine=True)
+              (mlp): Sequential(
+                (0): Linear(in_features=384, out_features=1536, bias=True)
+                (1): GELU(approximate='none')
+                (2): Linear(in_features=1536, out_features=384, bias=True)
+              )
+            )
+          )
+        )
+      )
+      (downsamples): ModuleList(
+        (0): Conv3d(96, 192, kernel_size=(1, 2, 2), stride=(1, 2, 2))
+        (1): Conv3d(192, 384, kernel_size=(1, 2, 2), stride=(1, 2, 2))
+      )
+    )
+    (conv_layers): ModuleList(
+      (0): ModuleList(
+        (0-3): 4 x Conv2d(96, 24, kernel_size=(1, 1), stride=(1, 1))
+      )
+      (1): ModuleList(
+        (0-3): 4 x Conv2d(192, 48, kernel_size=(1, 1), stride=(1, 1))
+      )
+      (2): ModuleList(
+        (0-3): 4 x Conv2d(384, 96, kernel_size=(1, 1), stride=(1, 1))
+      )
+    )
+  )
+  (resblocks): ModuleList(
+    (0-1): 2 x ResidualBlock(
+      (conv1): Conv2d(384, 384, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      (relu): ReLU()
+      (conv2): Conv2d(384, 384, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    )
+  )
+  (decoders): ModuleList(
+    (0): UpsampleConvLayer(
+      (conv2d): Conv2d(384, 192, kernel_size=(5, 5), stride=(1, 1), padding=(2, 2))
+    )
+    (1): UpsampleConvLayer(
+      (conv2d): Conv2d(192, 96, kernel_size=(5, 5), stride=(1, 1), padding=(2, 2))
+    )
+    (2): UpsampleConvLayer(
+      (conv2d): Conv2d(96, 48, kernel_size=(5, 5), stride=(1, 1), padding=(2, 2))
+    )
+  )
+  (pred): ConvLayer(
+    (conv2d): Conv2d(48, 1, kernel_size=(1, 1), stride=(1, 1))
+  )
+)
+Loading initial model weights from: /root/shared-nvme/spikemamba/train_runs/checkpoints/train_s2d_MambaSSM_STRICT_20260306_124138_bs2/model_best.pth.tar
+999
+======================================
+(1, 224, 224)
+======================================
+test preview of index  21
+test preview of index  22
+test preview of index  23
+saved image  100
+saved image  200
+saved image  300
+saved image  400
+saved image  500
+saved image  600
+saved image  700
+saved image  800
+saved image  900
+total scale:  1.0261866230148453
+min scale:  0.9815950393676758
+max scale:  1.038925290107727
+total metrics:  [8.66722188e-03 2.74056601e+02 6.29886402e-03 1.33525033e-02
+ 4.65602820e-02 9.08985111e-02]

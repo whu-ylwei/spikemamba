@@ -1,0 +1,19 @@
+Setting up Multi Scale Gradient loss...
+Done
+Traceback (most recent call last):
+  File "/root/shared-nvme/spikemamba/model/mamba_3d.py", line 5, in <module>
+    from mamba_ssm.modules.mamba_simple import Mamba
+ModuleNotFoundError: No module named 'mamba_ssm'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/shared-nvme/spikemamba/test_DENSE.py", line 9, in <module>
+    from model.S2DepthNet import S2DepthTransformerUNetConv
+  File "/root/shared-nvme/spikemamba/model/S2DepthNet.py", line 6, in <module>
+    from model.encoder_transformer import LongSpikeStreamEncoderConv
+  File "/root/shared-nvme/spikemamba/model/encoder_transformer.py", line 4, in <module>
+    from .mamba_3d import Mamba3DEncoder
+  File "/root/shared-nvme/spikemamba/model/mamba_3d.py", line 7, in <module>
+    raise ImportError(
+ImportError: mamba_ssm is required and fallback is disabled. Please install a GPU-compatible mamba_ssm build before training.
