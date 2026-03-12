@@ -1,0 +1,37 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Virtual environments and IDE files
+.venv/
+venv/
+.idea/
+.ipynb_checkpoints/
+
+# Training logs, checkpoints, and outputs
+logs/
+run_logs/
+runs/
+train_runs/
+test_runs/
+reports/
+unified_named_results/
+s2d_checkpoints/
+output1/
+
+# Local datasets and large artifacts
+DENSE-spike/
+wheels/
+*.whl
+*.zip
+*.filepart
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+
+# Generated training/result documents
+ALL_TRAIN_LOGS_PARAMS_EVAL_CHRONOLOGY_*.md
+README_TEST_RESULTS_*.md
+README_TRAINING_*.md

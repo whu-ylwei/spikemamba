@@ -5,7 +5,7 @@ Dataset classes
 
 from torch.utils.data import Dataset
 from .spike_dataset import VoxelGridDENSESpikeDataset
-from skimage import io
+import imageio.v2 as iio
 from os.path import join
 import numpy as np
 from utils.util import first_element_greater_than, last_element_less_than
@@ -114,7 +114,7 @@ class SequenceSynchronizedFramesSpikesDENSEDataset(Dataset):
         if self.scale_factor < 1.0:
             for data_items in sequence:
                 for k, item in data_items.items():
-                    if k is not "times" and k is not "batchlength_events":
+                    if k != "times" and k != "batchlength_events":
                         item = item[None]
                         if "semantic" in k:
                             item = f.interpolate(item, scale_factor=self.scale_factor,
@@ -186,7 +186,7 @@ class SynchronizedFramesSpikesDENSEDataset(Dataset):
         self.length = len(self.spike_dataset)
 
         # Check that the frame timestamps are unique and sorted
-        assert(np.alltrue(np.diff(self.stamps) > 0)
+        assert(np.all(np.diff(self.stamps) > 0)
                ), "frame timestamps are not unique and monotonically increasing"
 
         # Check that the latest frame in the dataset has a timestamp >= the latest event frame
@@ -320,13 +320,13 @@ class SynchronizedFramesSpikesDENSEDataset(Dataset):
                         last_gray_frame = torch.zeros_like(frame)
                     else:
                         if self.use_mvsec:
-                            rgb_frame = io.imread(
-                                join(self.frame_folder, 'frame_{:010d}.png'.format(frame_idx - (k + 1))),
-                                as_gray=False).astype(np.float32)
+                            rgb_frame = iio.imread(
+                                join(self.frame_folder, 'frame_{:010d}.png'.format(frame_idx - (k + 1)))
+                            ).astype(np.float32)
                         else:
                             path_rgbframe = glob.glob(self.frame_folder + '/*_{:04d}_image.png'.format(frame_idx-(k+1)))
                             #path_rgbframe = glob.glob(self.frame_folder + '/*_{:04d}_image.png'.format(frame_idx))  # ergb0 ideal
-                            rgb_frame = io.imread(path_rgbframe[0], as_gray=False).astype(np.float32)
+                            rgb_frame = iio.imread(path_rgbframe[0]).astype(np.float32)
 
                         if rgb_frame.shape[2] > 1:
                             last_gray_frame = rgb2gray(rgb_frame)  # [H x W]
@@ -352,11 +352,12 @@ class SynchronizedFramesSpikesDENSEDataset(Dataset):
                 if self.frame_folder is not None:
                     try:
                         if self.use_mvsec:
-                            rgb_frame = io.imread(join(self.frame_folder, 'frame_{:010d}.png'.format(frame_idx)),
-                                                                          as_gray=False).astype(np.float32)
+                            rgb_frame = iio.imread(
+                                join(self.frame_folder, 'frame_{:010d}.png'.format(frame_idx))
+                            ).astype(np.float32)
                         else:
                             path_rgbframe = glob.glob(self.frame_folder + '/frame_{:010d}.png'.format(frame_idx))
-                            rgb_frame = io.imread(path_rgbframe[0], as_gray=False).astype(np.float32)
+                            rgb_frame = iio.imread(path_rgbframe[0]).astype(np.float32)
 
                         if len(rgb_frame.shape) > 2:
                             if rgb_frame.shape[2] > 1:
@@ -381,7 +382,8 @@ class SynchronizedFramesSpikesDENSEDataset(Dataset):
                     item['image'] = gray_frame
                 elif self.baseline == 'ergb' or self.baseline == 'ergb0':
                     item['image'] = torch.cat((events["events"], gray_frame), axis=0)
-                elif self.baseline == 's':
+                # "s" baseline should feed spike/event bins as model input.
+                elif self.baseline == 's' or self.baseline == 'e':
                     item['image'] = events['events']
                 item['depth_image'] = frame
                 if self.use_phased_arch:

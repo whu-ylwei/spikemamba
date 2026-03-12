@@ -13,7 +13,8 @@ import matplotlib.colors as colors
 from model.metric import *
 
 from test_DENSE import ensure_dir
-
+import matplotlib
+matplotlib.use('Agg')
 
 def FLAGS():
     parser = argparse.ArgumentParser("""Data estimation.""")
@@ -161,7 +162,7 @@ def display_high_contrast_colormap (idx, target, prediction, prefix="", colormap
         pcm = ax[1].pcolormesh(prediction_plot, cmap=colormap, vmin=np.min(target), vmax=percent*second_largest)
         ax[1].set_title("Prediction")
         fig.colorbar(pcm, ax=ax[1], extend='both', orientation='vertical')
-        fig.canvas.set_window_title(prefix+"High_Contrast_Depth_Evaluation")
+        fig.canvas.manager.set_window_title(prefix+"High_Contrast_Depth_Evaluation")
     if folder_name is not None:
         plt.savefig('%s/frame_%010d.png' % (folder_name, idx))
         plt.close(fig)

@@ -482,8 +482,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.config is None:
-        head_tail = os.path.split(args.path_to_model)
-        config = json.load(open(os.path.join(head_tail[0], 'config.json')))
+        model_dir = os.path.dirname(args.path_to_model)
+        config_path = os.path.join(model_dir, 'config.json')
+        if not os.path.exists(config_path):
+            config_path = os.path.join(os.path.dirname(model_dir), 'config.json')
+        config = json.load(open(config_path))
     else:
         config = json.load(open(args.config))
 

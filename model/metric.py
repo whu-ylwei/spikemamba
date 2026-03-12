@@ -1,9 +1,4 @@
-from sklearn.metrics import mean_squared_error
-# from skimage.measure import compare_ssim as ssim
-from skimage import measure
-import torch
 import numpy as np
-from scipy import ndimage
 
 
 def abs_rel_diff(y_input, y_target, eps = 1e-6):
@@ -34,42 +29,19 @@ def median_error(y_input, y_target):
     return np.median(abs_diff[~np.isnan(abs_diff)])
 
 def mse(y_input, y_target):
-    N, C, H, W = y_input.shape
-    assert(C == 1 or C == 3)
-    sum_mse_over_batch = 0.
+    if y_input.shape != y_target.shape:
+        raise ValueError(f"Shape mismatch: {y_input.shape} vs {y_target.shape}")
 
-    for i in range(N):
-        sum_mse_over_batch += mean_squared_error(
-            y_input[i, 0, :, :][~np.isnan(y_target[i, 0, :, :])], y_target[i, 0, :, :][~np.isnan(y_target[i, 0, :, :])])
+    diff = y_input - y_target
+    valid_mask = ~np.isnan(y_target)
+    if not np.any(valid_mask):
+        return 0.0
 
-        if C == 3:  # color
-            sum_mse_over_batch += mean_squared_error(
-                y_input[i, 1, :, :][~np.isnan(y_target[i, 1, :, :])], y_target[i, 1, :, :][~np.isnan(y_target[i, 1, :, :])])
-            sum_mse_over_batch += mean_squared_error(
-                y_input[i, 2, :, :][~np.isnan(y_target[i, 2, :, :])], y_target[i, 2, :, :][~np.isnan(y_target[i, 2, :, :])])
-
-    mean_mse = sum_mse_over_batch / (float(N))
-    if C == 3:
-        mean_mse /= 3.0
-
-    return mean_mse
+    sq = diff[valid_mask] ** 2
+    return float(np.mean(sq))
 
 
 def structural_similarity(y_input, y_target):
-    N, C, H, W = y_input.shape
-    assert(C == 1 or C == 3)
-    # N x C x H x W -> N x W x H x C -> N x H x W x C
-    y_input = np.swapaxes(y_input, 1, 3)
-    y_input = np.swapaxes(y_input, 1, 2)
-    y_target = np.swapaxes(y_target, 1, 3)
-    y_target = np.swapaxes(y_target, 1, 2)
-    sum_structural_similarity_over_batch = 0.
-    for i in range(N):
-        if C == 3:
-            sum_structural_similarity_over_batch += measure.compare_ssim(
-                y_input[i, :, :, :], y_target[i, :, :, :], multichannel=True)
-        else:
-            sum_structural_similarity_over_batch += measure.compare_ssim(
-                y_input[i, :, :, 0], y_target[i, :, :, 0])
-
-    return sum_structural_similarity_over_batch / float(N)
+    raise NotImplementedError(
+        "structural_similarity metric requires optional image-metric dependencies."
+    )

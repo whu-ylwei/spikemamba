@@ -1,5 +1,5 @@
 {
-    "name": "train_s2d_SpikeTransformer",
+    "name": "train_s2d_SpikeTransformer_rtx5090_20260305_smoke2",
     "cuda": true,
     "gpu": 0,
     "data_loader": {
@@ -51,7 +51,10 @@
     },
     "loss": {
         "type": "scale_invariant_loss",
-        "config": {"weight": 1.0, "n_lambda" : 1.0}
+        "config": {
+            "weight": 1.0,
+            "n_lambda": 1.0
+        }
     },
     "grad_loss": {
         "weight": 0.25
@@ -76,8 +79,9 @@
         "grid_loss": true,
         "loss_composition": "image",
         "grad_clip_norm": 1.0,
-        "loss_weights": [1]
-
+        "loss_weights": [
+            1
+        ]
     },
     "arch": "S2DepthTransformerUNetConv",
     "use_phased_arch": false,
@@ -87,16 +91,35 @@
         "skip_type": "sum",
         "recurrent_block_type": "none",
         "state_combination": "none",
-        "spatial_resolution": [112, 112],
+        "spatial_resolution": [
+            112,
+            112
+        ],
         "num_encoders": 3,
         "base_num_channels": 96,
         "num_residual_blocks": 2,
         "use_upsample_conv": true,
         "norm": "none",
-        "swin_depths": [2,2,6],
-        "swin_num_heads": [3,6,12],
-        "swin_out_indices": [0,1,2],
-        "swin_patch_size": [32,2,2],
+        "swin_depths": [
+            2,
+            2,
+            6
+        ],
+        "swin_num_heads": [
+            3,
+            6,
+            12
+        ],
+        "swin_out_indices": [
+            0,
+            1,
+            2
+        ],
+        "swin_patch_size": [
+            32,
+            2,
+            2
+        ],
         "ape": true,
         "new_v": 4,
         "output_activation": "identity"

@@ -57,13 +57,15 @@ class BaseTrainer:
         assert self.monitor_mode == 'min' or self.monitor_mode == 'max'
         self.monitor_best = math.inf if self.monitor_mode == 'min' else -math.inf
         self.start_epoch = 1
-        self.checkpoint_dir = os.path.join(config['trainer']['save_dir'], self.name)
+        self.run_dir = os.path.join(config['trainer']['save_dir'], self.name)
+        self.checkpoint_dir = os.path.join(self.run_dir, 'checkpoints')
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % self.ngpus_per_node == 0):
+            ensure_dir(self.run_dir)
             ensure_dir(self.checkpoint_dir)
-            json.dump(config, open(os.path.join(self.checkpoint_dir, 'config.json'), 'w'),
+            json.dump(config, open(os.path.join(self.run_dir, 'config.json'), 'w'),
                       indent=4, sort_keys=False)
 
-        self.tensorboard_logdir = os.path.join(self.checkpoint_dir, 'tensorboard')
+        self.tensorboard_logdir = os.path.join(self.run_dir, 'tensorboard')
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % self.ngpus_per_node == 0):
             ensure_dir(self.tensorboard_logdir)
         self.writer = SummaryWriter(log_dir=self.tensorboard_logdir)

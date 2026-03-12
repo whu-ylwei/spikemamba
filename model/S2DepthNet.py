@@ -37,14 +37,29 @@ class S2DepthTransformerUNetConv(BaseERGB2Depth):
             self.num_v = 0
 
         self.max_num_channels = self.base_num_channels * pow(2, self.num_encoders-1)
-        self.activation = getattr(torch, 'sigmoid')
+        output_activation = str(config.get("output_activation", "identity")).lower()
+        if output_activation in ("identity", "none", "linear"):
+            self.output_activation = None
+        elif output_activation == "sigmoid":
+            self.output_activation = torch.sigmoid
+        elif output_activation == "softplus":
+            self.output_activation = F.softplus
+        else:
+            raise ValueError(
+                f"Unsupported output_activation='{output_activation}'. "
+                "Use one of: identity, sigmoid, softplus."
+            )
+        self.output_scale = float(config.get("output_scale", 1.0))
+        self.output_shift = float(config.get("output_shift", 0.0))
         # self.num_channel_spikes = config["num_channel_spikes"]
         self.num_output_channels = 1
 
         print('----- ', self.num_heads)
         self.encoder = LongSpikeStreamEncoderConv(
             patch_size=self.patch_size,
-            in_chans=self.num_bins_rgb,
+            # Treat spike bins as temporal dimension for 3D encoder.
+            in_chans=1,
+            temporal_bins=self.num_bins_rgb,
             embed_dim=self.base_num_channels,
             depths=self.depths,
             num_heads=self.num_heads,
@@ -110,27 +125,91 @@ class S2DepthTransformerUNetConv(BaseERGB2Depth):
                     # print(x.shape)
             # x = decoder(x)
 
-        # tail
-        # img = self.activation(self.pred(self.apply_skip_connection(x, head)))
-        img = self.activation(self.pred(x))
+        # Use a configurable output head to avoid hard sigmoid saturation.
+        logits = self.pred(x)
+        if self.output_activation is None:
+            img = logits
+        else:
+            img = self.output_activation(logits)
+        if self.output_scale != 1.0 or self.output_shift != 0.0:
+            img = img * self.output_scale + self.output_shift
 
         return img
 
+    def _select_spike_tensor(self, item):
+        if "depth_image" in item and not any(k in item for k in ("image", "events", "events0")):
+            raise RuntimeError(
+                "Input dictionary only contains 'depth_image' and no spike/event tensor. "
+                "This leaks supervision target into model input and breaks training."
+            )
+
+        for key in ("image", "events", "events0"):
+            tensor = item.get(key)
+            if torch.is_tensor(tensor):
+                return tensor.to(self.gpu, non_blocking=True)
+
+        for key in sorted(item.keys()):
+            if key.startswith("events") and torch.is_tensor(item[key]):
+                return item[key].to(self.gpu, non_blocking=True)
+
+        for key, value in item.items():
+            if key.startswith("depth"):
+                continue
+            if torch.is_tensor(value):
+                return value.to(self.gpu, non_blocking=True)
+
+        raise ValueError(f"No usable spike/event tensor found. Available keys: {list(item.keys())}")
+
     def forward(self, item, prev_super_states, prev_states_lstm):
-        #def forward(self, spike_tensor, prev_states=None):
+        # def forward(self, spike_tensor, prev_states=None):
         """
-        :param spike_tensor: N x C x H x W
-        :return: a predicted image of size N x 1 x H x W, taking values in [0,1].
+        :param item: N x C x H x W tensor or dict containing the image data
+        :return: predicted depth logits/map tensor of size N x 1 x H x W.
         """
 
         predictions_dict = {}
 
-        spike_tensor = item["image"].to(self.gpu)
+        if isinstance(item, dict):
+            spike_tensor = self._select_spike_tensor(item)
+        elif torch.is_tensor(item):
+            spike_tensor = item.to(self.gpu, non_blocking=True)
+        else:
+            raise TypeError(f"Unsupported input type: {type(item)}. Expected dict or tensor.")
+
+        expected_channels = self.num_bins_rgb
+
+        if spike_tensor.ndim == 4:
+            actual_channels = spike_tensor.shape[1]
+            if actual_channels != expected_channels:
+                if actual_channels == 1 and expected_channels > 1:
+                    spike_tensor = spike_tensor.repeat(1, expected_channels, 1, 1)
+                elif actual_channels > expected_channels:
+                    spike_tensor = spike_tensor[:, :expected_channels, :, :]
+                else:
+                    repeat_times = expected_channels // actual_channels
+                    remainder = expected_channels % actual_channels
+                    spike_tensor = spike_tensor.repeat(1, repeat_times, 1, 1)
+                    if remainder > 0:
+                        additional_channels = spike_tensor[:, :remainder, :, :]
+                        spike_tensor = torch.cat([spike_tensor, additional_channels], dim=1)
+                    spike_tensor = spike_tensor[:, :expected_channels, :, :]
+            spike_tensor = spike_tensor.unsqueeze(1)
+        elif spike_tensor.ndim == 5:
+            # Accept both (B,1,T,H,W) and legacy (B,T,1,H,W).
+            if spike_tensor.shape[1] == expected_channels and spike_tensor.shape[2] == 1:
+                spike_tensor = spike_tensor.permute(0, 2, 1, 3, 4).contiguous()
+            elif spike_tensor.shape[1] != 1 or spike_tensor.shape[2] != expected_channels:
+                raise ValueError(
+                    f"Unsupported 5D spike tensor shape {tuple(spike_tensor.shape)}; "
+                    f"expected (B,1,{expected_channels},H,W) or (B,{expected_channels},1,H,W)."
+                )
+        else:
+            raise ValueError(
+                f"Unsupported spike tensor rank {spike_tensor.ndim}; expected 4D or 5D input."
+            )
+
         encoded_xs = self.encoder(spike_tensor)
-        # for x in encoded_xs:
-            # print(x.shape)
         prediction = self.forward_decoder(encoded_xs)
         predictions_dict["image"] = prediction
 
         return predictions_dict, {'image': None}, prev_states_lstm
-

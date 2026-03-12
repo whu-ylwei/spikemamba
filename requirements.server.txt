@@ -22,9 +22,6 @@ lazy-object-proxy
 Markdown
 matplotlib
 mccabe
-mkl-fft
-mkl-random
-mkl-service
 moviepy
 networkx
 numpy

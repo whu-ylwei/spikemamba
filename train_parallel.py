@@ -98,6 +98,17 @@ def concatenate_subfolders(base_folder, dataset_type, spike_folder, depth_folder
     return concat_dataset
 
 
+def normalize_save_dir(config):
+    save_dir = config.get('trainer', {}).get('save_dir')
+    if not save_dir:
+        return
+    normalized = save_dir
+    normalized = normalized.replace("s2d_checkpoints", "runs/train")
+    normalized = normalized.replace("train_runs/checkpoints", "runs/train")
+    if normalized != save_dir:
+        config['trainer']['save_dir'] = normalized
+
+
 def main_worker(gpu, ngpus_per_node, args):
 # def main_worker(config, resume, initial_checkpoint=None, DeviceIds=None):
     args.gpu = gpu
@@ -311,8 +322,10 @@ def main():
             logger.warning(
                 'Warning: --initial_checkpoint overriden by --resume')
         config = torch.load(args.resume)['config']
+        normalize_save_dir(config)
     if args.config is not None:
         config = json.load(open(args.config))
+        normalize_save_dir(config)
         path = os.path.join(config['trainer']['save_dir'], config['name'])
         if args.resume is None:
             assert not os.path.exists(path), "Path {} already exists!".format(path)
