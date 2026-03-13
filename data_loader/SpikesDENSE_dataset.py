@@ -381,8 +381,7 @@ class SynchronizedFramesSpikesDENSEDataset(Dataset):
                     item['image'] = gray_frame
                 elif self.baseline == 'ergb' or self.baseline == 'ergb0':
                     item['image'] = torch.cat((events["events"], gray_frame), axis=0)
-                # "s" baseline should feed spike/event bins as model input.
-                elif self.baseline == 's' or self.baseline == 'e':
+                elif self.baseline == 's':
                     item['image'] = events['events']
                 item['depth_image'] = frame
                 if self.use_phased_arch:

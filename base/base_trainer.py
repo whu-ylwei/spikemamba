@@ -30,17 +30,15 @@ class BaseTrainer:
         self.save_freq = config['trainer']['save_freq']
         self.verbosity = config['trainer']['verbosity']
         self.with_cuda = config['cuda'] and torch.cuda.is_available()
-        # if config['cuda'] and not torch.cuda.is_available():
-        #     self.logger.warning('Warning: There\'s no CUDA support on this machine, '
-        #                         'training is performed on CPU.')
-        # else:
-        #     self.gpu = torch.device('cuda:' + str(config['gpu']))
-        #     self.model = self.model.to(self.gpu)
-        self.gpu = args.gpu
-            # pass
-            # model = torch.nn.DataParallel(model).cuda()
-            # print(model.device_ids)
-        # print(model.device_ids)
+        if config['cuda'] and not self.with_cuda:
+            self.logger.warning("CUDA requested but unavailable, training is performed on CPU.")
+        if self.with_cuda:
+            if args.gpu is not None:
+                self.gpu = torch.device(f'cuda:{args.gpu}')
+            else:
+                self.gpu = torch.device('cuda')
+        else:
+            self.gpu = torch.device('cpu')
         
 
         self.train_logger = train_logger
@@ -190,7 +188,7 @@ class BaseTrainer:
             for state in self.optimizer.state.values():
                 for k, v in state.items():
                     if isinstance(v, torch.Tensor):
-                        state[k] = v.cuda(self.gpu)
+                        state[k] = v.to(self.gpu)
         self.train_logger = checkpoint['logger']
         #self.config = checkpoint['config']
         self.logger.info("Checkpoint '{}' (epoch {}) loaded".format(resume_path, self.start_epoch))

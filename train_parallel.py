@@ -2,7 +2,6 @@ import os
 import json
 import logging
 import argparse
-from datetime import datetime, timezone
 import torch
 from model.model import *
 from model.S2DepthNet import S2DepthTransformerUNetConv
@@ -18,16 +17,11 @@ import bisect
 import torch.backends.cudnn as cudnn
 import torch.multiprocessing as mp
 import torch.distributed as dist
-# ???????????
-class DataParallelModel(torch.nn.DataParallel):
-    def __init__(self, module, device_ids=None, output_device=None, dim=0, find_unused_parameters=False):
-        super(DataParallelModel, self).__init__(module, device_ids, output_device, dim)
-        self.find_unused_parameters = find_unused_parameters
 
 logging.basicConfig(level=logging.INFO, format='')
 
 parser = argparse.ArgumentParser(
-    description='Spike Transformer')
+        description='Spike Transformer')
 parser.add_argument('-c', '--config', default=None, type=str,
                     help='config file path (default: None)')
 parser.add_argument('-f', '--datafolder', default=None, type=str,
@@ -36,20 +30,18 @@ parser.add_argument('-r', '--resume', default=None, type=str,
                     help='path to latest checkpoint (default: None)')
 parser.add_argument('-i', '--initial_checkpoint', default=None, type=str,
                     help='path to the checkpoint with which to initialize the model weights (default: None)')
-parser.add_argument('--num_threads', type=int, help='number of threads to use for data loading', default=1)
-parser.add_argument('--world_size', type=int, help='number of nodes for distributed training', default=1)
-parser.add_argument('--rank', type=int, help='node rank for distributed training', default=0)
-parser.add_argument('--dist_url', type=str, help='url used to set up distributed training',
-                    default='tcp://127.0.0.1:1241')
-parser.add_argument('--dist_backend', type=str, help='distributed backend', default='nccl')
-parser.add_argument('--gpu', type=int, help='GPU id to use.', default=None)
-parser.add_argument('--multiprocessing_distributed', help='Use multi-processing distributed training to launch '
-                                                          'N processes per node, which has N GPUs. This is the '
-                                                          'fastest way to use PyTorch for either single node or '
-                                                          'multi node data parallel training', action='store_true', )
+parser.add_argument('--num_threads',               type=int,   help='number of threads to use for data loading', default=1)
+parser.add_argument('--world_size',                type=int,   help='number of nodes for distributed training', default=1)
+parser.add_argument('--rank',                      type=int,   help='node rank for distributed training', default=0)
+parser.add_argument('--dist_url',                  type=str,   help='url used to set up distributed training', default='tcp://127.0.0.1:1241')
+parser.add_argument('--dist_backend',              type=str,   help='distributed backend', default='nccl')
+parser.add_argument('--gpu',                       type=int,   help='GPU id to use.', default=None)
+parser.add_argument('--multiprocessing_distributed',           help='Use multi-processing distributed training to launch '
+                                                                    'N processes per node, which has N GPUs. This is the '
+                                                                    'fastest way to use PyTorch for either single node or '
+                                                                    'multi node data parallel training', action='store_true',)
 
 args = parser.parse_args()
-
 
 class ConcatDatasetCustom(ConcatDataset):
     def __getitem__(self, idx):
@@ -107,24 +99,22 @@ def concatenate_subfolders(base_folder, dataset_type, spike_folder, depth_folder
 
 
 def main_worker(gpu, ngpus_per_node, args):
-    # def main_worker(config, resume, initial_checkpoint=None, DeviceIds=None):
+# def main_worker(config, resume, initial_checkpoint=None, DeviceIds=None):
     args.gpu = gpu
-
-    if args.gpu is not None:
+    if args.gpu is not None and args.config['cuda']:
         print("Use GPU: {} for training".format(args.gpu))
-    if args.gpu is None:
-        args.gpu = 0
+
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
         if args.multiprocessing_distributed:
             args.rank = args.rank * ngpus_per_node + gpu
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size,
-                                rank=args.rank)
-
-    config = args.config
+        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
+    
+    config = args.config 
     resume = args.resume
     initial_checkpoint = args.initial_checkpoint
+
 
     train_logger = None
 
@@ -186,7 +176,7 @@ def main_worker(gpu, ngpus_per_node, args):
     loss_weights = config['trainer']['loss_weights']
     normalize = config['data_loader'].get('normalize', True)
 
-    train_dataset = concatenate_subfolders(join(args.datafolder, base_folder['train']),
+    train_dataset = concatenate_subfolders(join(args.datafolder,base_folder['train']),
                                            dataset_type['train'],
                                            spike_folder['train'],
                                            depth_folder['train'],
@@ -208,7 +198,7 @@ def main_worker(gpu, ngpus_per_node, args):
                                            recurrency=recurrency['train']
                                            )
 
-    validation_dataset = concatenate_subfolders(join(args.datafolder, base_folder['validation']),
+    validation_dataset = concatenate_subfolders(join(args.datafolder,base_folder['validation']),
                                                 dataset_type['validation'],
                                                 spike_folder['validation'],
                                                 depth_folder['validation'],
@@ -230,37 +220,31 @@ def main_worker(gpu, ngpus_per_node, args):
                                                 )
 
     # Set up data loaders
-    kwargs = {'num_workers': config['data_loader']['num_workers'],
-              'pin_memory': config['data_loader']['pin_memory']} if config['cuda'] else {}
-
-    # ????????????????
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-        validation_sampler = torch.utils.data.distributed.DistributedSampler(validation_dataset)
-    else:
-        train_sampler = None
-        validation_sampler = None
-
-    # ?????????????shuffle???????
-    train_shuffle = config['data_loader']['shuffle'] and not args.distributed
-    val_shuffle = False  # ??????shuffle
-
-    data_loader = DataLoader(train_dataset, batch_size=int(
-        config['data_loader']['batch_size'] / ngpus_per_node) if args.distributed else config['data_loader'][
-        'batch_size'],
-                             shuffle=train_shuffle,
+    kwargs = {
+        'num_workers': config['data_loader']['num_workers'],
+        'pin_memory': config['data_loader']['pin_memory'] if config['cuda'] else False
+    }
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset) if args.distributed else None
+    batch_size = config['data_loader']['batch_size']
+    if args.distributed and ngpus_per_node > 0:
+        batch_size = int(batch_size / ngpus_per_node)
+    data_loader = DataLoader(train_dataset,
+                             batch_size=batch_size,
+                             shuffle=train_sampler is None and config['data_loader']['shuffle'],
                              sampler=train_sampler,
                              **kwargs)
 
+    validation_sampler = torch.utils.data.distributed.DistributedSampler(validation_dataset, shuffle=False) if args.distributed else None
     valid_data_loader = DataLoader(validation_dataset,
-                                   batch_size=int(
-                                       config['data_loader']['batch_size'] / ngpus_per_node) if args.distributed else
-                                   config['data_loader']['batch_size'],
-                                   shuffle=val_shuffle,
+                                   batch_size=batch_size,
+                                   shuffle=False,
                                    sampler=validation_sampler,
                                    **kwargs)
 
-    config['model']['gpu'] = args.gpu
+    if config['cuda']:
+        config['model']['gpu'] = f'cuda:{args.gpu}' if args.gpu is not None else 'cuda'
+    else:
+        config['model']['gpu'] = 'cpu'
     config['model']['every_x_rgb_frame'] = config['data_loader']['train']['every_x_rgb_frame']
     config['model']['baseline'] = config['data_loader']['train']['baseline']
     config['model']['loss_composition'] = config['trainer']['loss_composition']
@@ -269,23 +253,28 @@ def main_worker(gpu, ngpus_per_node, args):
     model = eval(config['arch'])(config['model'])
     model.summary()
     if args.distributed:
-        if args.gpu is not None:
+        if args.gpu is not None and config['cuda']:
             torch.cuda.set_device(args.gpu)
-            model.cuda(args.gpu)
+            model = model.to(torch.device(f'cuda:{args.gpu}'))
             args.batch_size = int(config['data_loader']['batch_size'] / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], broadcast_buffers=False,
-                                                              find_unused_parameters=True)
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], broadcast_buffers=False, find_unused_parameters=True)
         else:
-            model.cuda()
-            model = DataParallelModel(model, find_unused_parameters=True)
+            model = model.to(torch.device('cpu'))
     else:
-        model = torch.nn.DataParallel(model)
-        model.cuda()
+        if config['cuda']:
+            if args.gpu is not None:
+                torch.cuda.set_device(args.gpu)
+                model = model.to(torch.device(f'cuda:{args.gpu}'))
+            else:
+                model = model.to(torch.device('cuda'))
+        else:
+            model = model.to(torch.device('cpu'))
 
     if args.distributed:
         print("Model Initialized on GPU: {}".format(args.gpu))
     else:
         print("Model Initialized")
+    
 
     if initial_checkpoint is not None:
         print('Loading initial model weights from: {}'.format(initial_checkpoint))
@@ -297,8 +286,9 @@ def main_worker(gpu, ngpus_per_node, args):
             times = torch.Tensor(1)
             _ = model.forward(dummy_input, times=times, prev_states=None)  # tag="events"
         model.load_state_dict(checkpoint['state_dict'])
-
-    cudnn.benchmark = True
+    
+    cudnn.benchmark = config['cuda']
+    
 
     loss = eval(config['loss']['type'])
     loss_params = config['loss']['config'] if 'config' in config['loss'] else None
@@ -306,13 +296,13 @@ def main_worker(gpu, ngpus_per_node, args):
     metrics = [eval(metric) for metric in config['metrics']]
 
     trainer = SpikeTTrainer(model, args, loss, loss_params, metrics,
-                            resume=resume,
-                            config=config,
-                            train_sampler=train_sampler,
-                            data_loader=data_loader,
-                            ngpus_per_node=ngpus_per_node,
-                            valid_data_loader=valid_data_loader,
-                            train_logger=train_logger)
+                              resume=resume,
+                              config=config,
+                              train_sampler=train_sampler,
+                              data_loader=data_loader, 
+                              ngpus_per_node=ngpus_per_node,
+                              valid_data_loader=valid_data_loader,
+                              train_logger=train_logger)
 
     trainer.train()
 
@@ -320,13 +310,13 @@ def main_worker(gpu, ngpus_per_node, args):
 def main():
     logger = logging.getLogger()
 
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
 
     ngpus_per_node = torch.cuda.device_count()
     if ngpus_per_node > 1 and not args.multiprocessing_distributed:
-        print(
-            "This machine has more than 1 gpu. Please specify --multiprocessing_distributed, or set \'CUDA_VISIBLE_DEVICES=0\'")
+        print("This machine has more than 1 gpu. Please specify --multiprocessing_distributed, or set \'CUDA_VISIBLE_DEVICES=0\'")
         return -1
 
     config = None
@@ -339,19 +329,23 @@ def main():
         config = torch.load(args.resume)['config']
     if args.config is not None:
         config = json.load(open(args.config))
+        if config['cuda'] and not torch.cuda.is_available():
+            logger.warning('CUDA requested in config but unavailable. Falling back to CPU.')
+            config['cuda'] = False
+        if not config['cuda']:
+            args.multiprocessing_distributed = False
+            args.world_size = 1
+            args.rank = 0
+            args.dist_backend = 'gloo'
         path = os.path.join(config['trainer']['save_dir'], config['name'])
         if args.resume is None:
-            if os.path.exists(path):
-                ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                old_name = config['name']
-                config['name'] = f"{old_name}_{ts}"
-                logger.warning(
-                    "Path %s already exists, auto-switching run name to %s",
-                    path,
-                    config['name'],
-                )
+            assert not os.path.exists(path), "Path {} already exists!".format(path)
     assert config is not None
     args.config = config
+
+    if not config['cuda']:
+        ngpus_per_node = 1
+        args.distributed = False
 
     if args.multiprocessing_distributed:
         print("---- Distributed Training ----")
@@ -362,4 +356,5 @@ def main():
 
 
 if __name__ == '__main__':
+
     main()

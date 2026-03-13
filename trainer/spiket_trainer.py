@@ -42,11 +42,13 @@ class SpikeTTrainer(BaseTrainer):
         self.every_x_rgb_frame = config['data_loader']['train']['every_x_rgb_frame']
         self.loss_composition = config['trainer']['loss_composition']
         self.loss_weights = config['trainer']['loss_weights']
-        self.grad_clip_norm = config['trainer'].get('grad_clip_norm', None)
         self.baseline = config['data_loader']['train']['baseline']
         self.calculate_total_metrics = []
         self.added_tensorboard_graph = False
         self.state_combination = config['model']['state_combination']
+        self.max_train_batches = config['trainer'].get('max_train_batches')
+        self.max_val_batches = config['trainer'].get('max_val_batches')
+        self.grad_clip_norm = config['trainer'].get('grad_clip_norm')
 
         self.state_preview_flag = False
 
@@ -108,19 +110,14 @@ class SpikeTTrainer(BaseTrainer):
         return acc_metrics
 
     def _to_input_and_target(self, item):
-        events = item['events'].cuda(self.args.gpu, non_blocking=True)
-        target = item['depth'].cuda(self.args.gpu, non_blocking=True)
-        image = item['image'].cuda(self.args.gpu, non_blocking=True)
-        semantic = item['semantic'].cuda(self.args.gpu, non_blocking=True) if self.use_semantic_loss else None
-        times = item['times'].float().cuda(self.args.gpu, non_blocking=True) if self.use_phased_arch else None
-
-        # events = item['events'].cuda()
-        # target = item['depth'].cuda()
-        # image = item['image'].cuda()
-        # semantic = item['semantic'].cuda() if self.use_semantic_loss else None
-        # times = item['times'].float().cuda() if self.use_phased_arch else None
-
-        return events, image, target,  semantic, times
+        non_blocking = self.with_cuda
+        events = item['events'].to(self.gpu, non_blocking=non_blocking)
+        target = item['depth'].to(self.gpu, non_blocking=non_blocking)
+        image = item['image'].to(self.gpu, non_blocking=non_blocking)
+        semantic = item['semantic'].to(self.gpu, non_blocking=non_blocking) if self.use_semantic_loss else None
+        times = item['times'].float().to(self.gpu, non_blocking=non_blocking) if self.use_phased_arch else None
+        flow = None
+        return events, image, target, flow, semantic, times
 
     @staticmethod
     def make_preview(event_previews, predicted_targets, groundtruth_targets):
@@ -216,19 +213,21 @@ class SpikeTTrainer(BaseTrainer):
         loss = sum(losses)
 
         # add all losses in a dict for logging
-        if total_loss_dict is None:
-            total_loss_dict = {'loss': loss, 'L_si': nominal_loss}
-            if self.use_grad_loss:
-                total_loss_dict['L_grad'] = grad_loss
-            if self.use_mse_loss:
-                total_loss_dict['L_mse'] = mse
-        else:
-            total_loss_dict['loss'] = total_loss_dict['loss'] + loss
-            total_loss_dict['L_si'] = total_loss_dict['L_si'] + nominal_loss
-            if self.use_grad_loss:
-                total_loss_dict['L_grad'] = total_loss_dict['L_grad'] + grad_loss
-            if self.use_mse_loss:
-                total_loss_dict['L_mse'] = total_loss_dict['L_mse'] + mse
+        with torch.no_grad():
+            if not total_loss_dict:
+                total_loss_dict = {'loss': loss, 'L_si': nominal_loss}
+                if self.use_grad_loss:
+                    total_loss_dict['L_grad'] = grad_loss
+                if self.use_mse_loss:
+                    total_loss_dict['L_mse'] = mse
+
+            else:
+                total_loss_dict['loss'] =  total_loss_dict['loss'] + loss
+                total_loss_dict['L_si'] += total_loss_dict['L_si'] + nominal_loss
+                if self.use_grad_loss:
+                    total_loss_dict['L_grad'] += total_loss_dict['L_grad'] + grad_loss
+                if self.use_mse_loss:
+                    total_loss_dict['L_mse'] += total_loss_dict['L_mse'] + mse
 
         return total_loss_dict
 
@@ -255,8 +254,9 @@ class SpikeTTrainer(BaseTrainer):
             prev_states_lstm['depth{}'.format(k)] = None
         prev_states_lstm['image'] = None
         losses = {}
-        total_batch_losses = None
+        total_batch_losses = {}
         new_target = None
+        loss_dict = {'losses': [], 'grad_losses': [], 'mse_losses': []}
 
         prev_super_states = {'image': None}
         for l in range(L):
@@ -277,8 +277,9 @@ class SpikeTTrainer(BaseTrainer):
                     weight_idx = self.loss_composition.index(key)
                     # or (self.baseline == "e" and (l+1) % 5 == 0):
                     if key not in losses:
-                        losses[key] = {'losses': [], 'grad_losses': [], 'mse_losses': []}
-                    new_target = item['depth_' + key].to(self.gpu)
+                        # losses[key] = {'losses': [], 'grad_losses': [], 'mse_losses': []}
+                        losses[key] = loss_dict
+                    new_target = item['depth_' + key].to(self.gpu, non_blocking=self.with_cuda)
                     # new_target = item['depth_' + key].to(item["image"])
                     is_nan = torch.isnan(new_target)
                     #print(new_predicted_targets[key][~is_nan].shape, torch.isnan(new_target).shape)
@@ -368,15 +369,7 @@ class SpikeTTrainer(BaseTrainer):
                         predicted_targets[key].append(new_predicted_targets[key].clone())
                         if key not in previews:
                             previews[key] = []
-                        # Some baselines do not expose an "image" input in each item.
-                        preview_src_key = key if key in item else None
-                        if preview_src_key is None:
-                            if 'events0' in item:
-                                preview_src_key = 'events0'
-                            else:
-                                preview_src_key = next((k for k in item.keys() if k.startswith('events')), None)
-                        if preview_src_key is not None:
-                            previews[key].append(torch.sum(item[preview_src_key].to(self.gpu), dim=1).unsqueeze(0))
+                        previews[key].append(torch.sum(item[key].to(self.gpu, non_blocking=self.with_cuda), dim=1).unsqueeze(0))
                         # previews[key].append(torch.sum(item[key].to(item["image"]), dim=1).unsqueeze(0))
                         if not self.loss_composition or key in self.loss_composition:
                             #(self.baseline == "e" and l+1 % 5 == 0):
@@ -458,7 +451,7 @@ class SpikeTTrainer(BaseTrainer):
             loss = losses['loss']
             
             loss.backward()
-            if self.grad_clip_norm is not None and self.grad_clip_norm > 0:
+            if self.grad_clip_norm is not None:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
             if batch_idx % 25 == 0:
                 plot_grad_flow(self.model.named_parameters())
@@ -490,6 +483,8 @@ class SpikeTTrainer(BaseTrainer):
                             len(self.data_loader) * self.data_loader.batch_size,
                             100.0 * batch_idx / len(self.data_loader),
                             loss_str))
+            if self.max_train_batches is not None and (batch_idx + 1) >= self.max_train_batches:
+                break
 
         if not self.args.multiprocessing_distributed or (self.args.multiprocessing_distributed and self.args.rank % self.ngpus_per_node == 0):
             with torch.no_grad():
@@ -521,7 +516,6 @@ class SpikeTTrainer(BaseTrainer):
                         fig = plot_grad_flow_bars(self.model.named_parameters())
                         self.writer.add_figure('grad_figure', fig, global_step=epoch)
                     for key in predicted_targets.keys():
-                        preview_step = self.record_every_N_sample
                         hist_idx = len(predicted_targets[key]) - 1  # choose an idx to plot
                         self.writer.add_histogram(f'{self.preview_count}_prediction_{key}',
                                                 predicted_targets[key][hist_idx],
@@ -539,20 +533,20 @@ class SpikeTTrainer(BaseTrainer):
                                 f'movie_{self.preview_count}__{key}__prediction__groundtruth',
                                 video_tensor, global_step=epoch, fps=5)
                         if self.still_previews:
+                            step = self.record_every_N_sample
                             if self.state_preview_flag:
                                 if key not in previews_states:
                                     previews_states[key] = []
                                 for i in range(len(state_previews[key])):
                                     previews_states[key].append(state_previews[key][i][None, :])
                             previews.append(self.make_preview(
-                                previews_outputs[key][::preview_step], predicted_targets[key][::preview_step],
-                                groundtruth_targets[::preview_step]))
+                                previews_outputs[key][::step], predicted_targets[key][::step], groundtruth_targets[::step]))
 
                         if self.grid_loss and (not self.loss_composition or key in self.loss_composition):
                             # or (self.baseline == "e" and l+1 % 5 == 0)):
                             if len(grad_loss_frames[key]) != 0:
                                 # print ("train len(grad_loss_frames[0]): ", len(grad_loss_frames[::step][0]))
-                                previews.append(self.make_grad_loss_preview(grad_loss_frames[key][::preview_step][0]))
+                                previews.append(self.make_grad_loss_preview(grad_loss_frames[key][::step][0]))
 
                     for tag, value in self.model.named_parameters():
                         # print("tag: ", tag)
@@ -567,7 +561,7 @@ class SpikeTTrainer(BaseTrainer):
                     self.preview_count += 1
 
             # compute average losses over the batch
-            total_losses = {loss_name: sum(loss_values) / len(self.data_loader)
+            total_losses = {loss_name: sum(loss_values) / len(loss_values)
                             for loss_name, loss_values in all_losses_in_batch.items()}
             log = {
                 'loss': total_losses['loss'],
@@ -613,6 +607,8 @@ class SpikeTTrainer(BaseTrainer):
                             batch_idx * self.valid_data_loader.batch_size,
                             len(self.valid_data_loader) * self.valid_data_loader.batch_size,
                             100.0 * batch_idx / len(self.valid_data_loader)))
+                if self.max_val_batches is not None and (batch_idx + 1) >= self.max_val_batches:
+                    break
             if not self.args.multiprocessing_distributed or (self.args.multiprocessing_distributed and self.args.rank % self.ngpus_per_node == 0):
                 print("all losses in batch in validation: ", all_losses_in_batch)
 
@@ -637,7 +633,6 @@ class SpikeTTrainer(BaseTrainer):
                     = self.forward_pass_sequence(sequence, record=True)
 
                 for key in predicted_targets.keys():
-                    preview_step = self.record_every_N_sample
                     total_metrics += self._eval_metrics(predicted_targets[key][0], groundtruth_targets[0])
                     if self.movie:
                         video_tensor = self.make_movie(previews_outputs[key], predicted_targets[key], groundtruth_targets)
@@ -646,15 +641,15 @@ class SpikeTTrainer(BaseTrainer):
                             video_tensor, global_step=epoch, fps=5)
                         self.preview_count += 1
                     if self.still_previews:
+                        step = self.record_every_N_sample
                         val_previews.append(self.make_preview(
-                            previews_outputs[key][::preview_step], predicted_targets[key][::preview_step],
-                            groundtruth_targets[::preview_step]))
+                            previews_outputs[key][::step], predicted_targets[key][::step], groundtruth_targets[::step]))
                     if self.grid_loss and (not self.loss_composition or key in self.loss_composition):
                         # or (self.baseline == "e" and l+1 % 5 == 0)):
                         if len(grad_loss_frames[key]) != 0:
-                            val_previews.append(self.make_grad_loss_preview(grad_loss_frames[key][::preview_step][0]))
+                            val_previews.append(self.make_grad_loss_preview(grad_loss_frames[key][::step][0]))
 
-        total_losses = {loss_name: sum(loss_values) / len(self.valid_data_loader)
+        total_losses = {loss_name: sum(loss_values) / len(loss_values)
                         for loss_name, loss_values in all_losses_in_batch.items()}
         return {
             'val_loss': total_losses['loss'],

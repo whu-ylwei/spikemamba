@@ -1,5 +1,5 @@
 {
-    "name": "train_s2d_SpikeTransformer_ep100_dense_spikemamba",
+    "name": "train_s2d_SpikeTransformer_stable_30ep_20260312",
     "cuda": true,
     "gpu": 0,
     "data_loader": {
@@ -40,13 +40,13 @@
         "shuffle": true
     },
     "lr_scheduler_type": "ExponentialLR",
-    "lr_scheduler_freq": 100,
+    "lr_scheduler_freq": 10,
     "lr_scheduler": {
         "gamma": 0.5
     },
     "optimizer_type": "Adam",
     "optimizer": {
-        "lr": 0.0003,
+        "lr": 0.0001,
         "weight_decay": 0
     },
     "loss": {
@@ -63,10 +63,10 @@
         "median_error"
     ],
     "trainer": {
-        "epochs": 100,
+        "epochs": 30,
         "sequence_length": 1,
         "save_dir": "s2d_checkpoints/",
-        "save_freq": 4,
+        "save_freq": 5,
         "verbosity": 2,
         "monitor": "val_loss",
         "monitor_mode": "min",
@@ -75,8 +75,8 @@
         "still_previews": true,
         "grid_loss": true,
         "loss_composition": "image",
-        "loss_weights": [1]
-
+        "loss_weights": [1],
+        "grad_clip_norm": 1.0
     },
     "arch": "S2DepthTransformerUNetConv",
     "use_phased_arch": false,
@@ -91,11 +91,13 @@
         "base_num_channels": 96,
         "num_residual_blocks": 2,
         "use_upsample_conv": true,
-        "norm": "none",
-        "swin_depths": [2,2,6],
-        "swin_num_heads": [3,6,12],
-        "swin_out_indices": [0,1,2],
-        "swin_patch_size": [32,2,2],
+        "norm": "BN",
+        "prediction_norm": "none",
+        "output_activation": "identity",
+        "swin_depths": [2, 2, 6],
+        "swin_num_heads": [3, 6, 12],
+        "swin_out_indices": [0, 1, 2],
+        "swin_patch_size": [32, 2, 2],
         "ape": true,
         "new_v": 4
     }

@@ -1,6 +1,6 @@
 {
-    "name": "train_s2d_SpikeTransformer_ep100_dense_spikemamba",
-    "cuda": true,
+    "name": "train_s2d_SpikeTransformer_cpu_smoke_v2",
+    "cuda": false,
     "gpu": 0,
     "data_loader": {
         "train": {
@@ -33,9 +33,9 @@
             "scale_factor": 1,
             "baseline": "s"
         },
-        "batch_size": 8,
-        "num_workers": 8,
-        "pin_memory": true,
+        "batch_size": 1,
+        "num_workers": 0,
+        "pin_memory": false,
         "normalize": true,
         "shuffle": true
     },
@@ -51,7 +51,10 @@
     },
     "loss": {
         "type": "scale_invariant_loss",
-        "config": {"weight": 1.0, "n_lambda" : 1.0}
+        "config": {
+            "weight": 1.0,
+            "n_lambda": 1.0
+        }
     },
     "grad_loss": {
         "weight": 0.25
@@ -63,20 +66,24 @@
         "median_error"
     ],
     "trainer": {
-        "epochs": 100,
+        "epochs": 1,
         "sequence_length": 1,
         "save_dir": "s2d_checkpoints/",
-        "save_freq": 4,
+        "save_freq": 1,
         "verbosity": 2,
         "monitor": "val_loss",
         "monitor_mode": "min",
-        "num_previews": 2,
-        "num_val_previews": 2,
-        "still_previews": true,
-        "grid_loss": true,
+        "num_previews": 1,
+        "num_val_previews": 1,
+        "still_previews": false,
+        "movie": false,
+        "grid_loss": false,
         "loss_composition": "image",
-        "loss_weights": [1]
-
+        "loss_weights": [
+            1
+        ],
+        "max_train_batches": 1,
+        "max_val_batches": 1
     },
     "arch": "S2DepthTransformerUNetConv",
     "use_phased_arch": false,
@@ -86,16 +93,35 @@
         "skip_type": "sum",
         "recurrent_block_type": "none",
         "state_combination": "none",
-        "spatial_resolution": [112, 112],
+        "spatial_resolution": [
+            112,
+            112
+        ],
         "num_encoders": 3,
         "base_num_channels": 96,
         "num_residual_blocks": 2,
         "use_upsample_conv": true,
         "norm": "none",
-        "swin_depths": [2,2,6],
-        "swin_num_heads": [3,6,12],
-        "swin_out_indices": [0,1,2],
-        "swin_patch_size": [32,2,2],
+        "swin_depths": [
+            2,
+            2,
+            6
+        ],
+        "swin_num_heads": [
+            3,
+            6,
+            12
+        ],
+        "swin_out_indices": [
+            0,
+            1,
+            2
+        ],
+        "swin_patch_size": [
+            32,
+            2,
+            2
+        ],
         "ape": true,
         "new_v": 4
     }

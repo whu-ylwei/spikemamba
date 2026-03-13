@@ -62,6 +62,22 @@ class BaseERGB2Depth(BaseModel):
             self.norm = str(config['norm']) # 'none'
         except KeyError:
             self.norm = None
+        if self.norm in ['none', 'None', 'false', 'False']:
+            self.norm = None
+
+        try:
+            self.prediction_norm = config['prediction_norm']
+        except KeyError:
+            self.prediction_norm = None
+        if self.prediction_norm in ['none', 'None', 'false', 'False']:
+            self.prediction_norm = None
+        elif self.prediction_norm is not None:
+            self.prediction_norm = str(self.prediction_norm)
+
+        try:
+            self.output_activation = str(config['output_activation'])
+        except KeyError:
+            self.output_activation = 'sigmoid'
 
         try:
             self.use_upsample_conv = bool(config['use_upsample_conv'])  # True
@@ -84,6 +100,14 @@ class BaseERGB2Depth(BaseModel):
             self.loss_composition = False
 
         self.kernel_size = int(config.get('kernel_size', 5))    # 5
-        self.gpu = torch.device('cuda:' + str(config['gpu']))
-
-
+        gpu_config = config.get('gpu', 0)
+        if isinstance(gpu_config, torch.device):
+            self.gpu = gpu_config
+        elif isinstance(gpu_config, str):
+            self.gpu = torch.device(gpu_config)
+        elif gpu_config is None:
+            self.gpu = torch.device('cpu')
+        elif torch.cuda.is_available():
+            self.gpu = torch.device('cuda:' + str(gpu_config))
+        else:
+            self.gpu = torch.device('cpu')
