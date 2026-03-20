@@ -16,6 +16,11 @@ class ST_Mamba_Block(nn.Module):
         self.norm1 = nn.LayerNorm(dim)
         self.mamba_dim = dim * 4
         self.mamba = Mamba(self.mamba_dim)
+        self.mamba_bwd = Mamba(self.mamba_dim)
+        # Match Vim BiMamba v2 more closely: use shared input/output
+        # projections with direction-specific SSM parameters in between.
+        self.mamba_bwd.in_proj = self.mamba.in_proj
+        self.mamba_bwd.out_proj = self.mamba.out_proj
 
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = nn.Sequential(
@@ -64,7 +69,9 @@ class ST_Mamba_Block(nn.Module):
         # sees a sequence of length T * H/2 * W/2 with embedding size 4C.
         x1 = self.norm1(x)
         x1, folded_shape = self._fold_spatial_tokens(x1)
-        x1 = self.mamba(x1)
+        x1_fwd = self.mamba(x1)
+        x1_bwd = self.mamba_bwd(torch.flip(x1, dims=[1]))
+        x1 = 0.5 * (x1_fwd + torch.flip(x1_bwd, dims=[1]))
         x1 = self._unfold_spatial_tokens(x1, folded_shape)
 
         # back to [B, C, T, H, W]
