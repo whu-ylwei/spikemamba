@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from model.model import BaseERGB2Depth
 from model.encoder_transformer import LongSpikeStreamEncoderConv
+from model.manifold_flow import ConditionedDepthManifoldFlow
 from model.submodules import ResidualBlock, ConvLayer, UpsampleConvLayer
 
 
@@ -53,6 +54,8 @@ class S2DepthTransformerUNetConv(BaseERGB2Depth):
         self.output_shift = float(config.get("output_shift", 0.0))
         # self.num_channel_spikes = config["num_channel_spikes"]
         self.num_output_channels = 1
+        self.manifold_flow_cfg = config.get("manifold_flow", {})
+        self.use_manifold_flow = bool(self.manifold_flow_cfg.get("enabled", False))
 
         print('----- ', self.num_heads)
         self.encoder = LongSpikeStreamEncoderConv(
@@ -82,6 +85,15 @@ class S2DepthTransformerUNetConv(BaseERGB2Depth):
         self.build_resblocks()
         self.build_decoders()
         self.build_prediction_layer()
+        if self.use_manifold_flow:
+            self.manifold_flow = ConditionedDepthManifoldFlow(self.manifold_flow_cfg)
+
+    def _build_super_state(self, aux_losses=None, aux_outputs=None):
+        return {
+            "image": None,
+            "aux_losses": aux_losses or {},
+            "aux_outputs": aux_outputs or {},
+        }
     
     def build_resblocks(self):
         self.resblocks = nn.ModuleList()
@@ -209,7 +221,31 @@ class S2DepthTransformerUNetConv(BaseERGB2Depth):
             )
 
         encoded_xs = self.encoder(spike_tensor)
-        prediction = self.forward_decoder(encoded_xs)
+        coarse_prediction = self.forward_decoder(encoded_xs)
+        prediction = coarse_prediction
+        aux_losses = {}
+        aux_outputs = {}
+        next_states_lstm = dict(prev_states_lstm) if isinstance(prev_states_lstm, dict) else prev_states_lstm
+
+        if self.use_manifold_flow:
+            target_depth = None
+            if isinstance(item, dict):
+                target_depth = item.get("depth_image")
+                if torch.is_tensor(target_depth):
+                    target_depth = target_depth.to(self.gpu, non_blocking=True)
+
+            previous_latent_state = None
+            if isinstance(prev_states_lstm, dict):
+                previous_latent_state = prev_states_lstm.get("manifold_prev")
+
+            prediction, aux_losses, aux_outputs, manifold_state = self.manifold_flow(
+                coarse_prediction,
+                target_depth=target_depth,
+                prev_latent_state=previous_latent_state,
+            )
+            if isinstance(next_states_lstm, dict):
+                next_states_lstm["manifold_prev"] = manifold_state
+
         predictions_dict["image"] = prediction
 
-        return predictions_dict, {'image': None}, prev_states_lstm
+        return predictions_dict, self._build_super_state(aux_losses, aux_outputs), next_states_lstm

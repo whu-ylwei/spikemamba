@@ -98,6 +98,37 @@ class SpikeTTrainer(BaseTrainer):
         if valid_data_loader:
             self.val_preview_indices = select_evenly_spaced_elements(self.num_val_previews, len(self.valid_data_loader))
 
+    def _compute_primary_loss(self, prediction, target):
+        if self.loss_params is not None:
+            return self.loss(prediction, target, **self.loss_params)
+        return self.loss(prediction, target)
+
+    @staticmethod
+    def _extract_auxiliary_payload(super_states):
+        if not isinstance(super_states, dict):
+            return {}, {}
+        aux_losses = super_states.get('aux_losses', {})
+        aux_outputs = super_states.get('aux_outputs', {})
+        return aux_losses if isinstance(aux_losses, dict) else {}, aux_outputs if isinstance(aux_outputs, dict) else {}
+
+    @staticmethod
+    def _accumulate_extra_loss(extra_loss_terms, name, value):
+        if value is None or not torch.is_tensor(value):
+            return
+        extra_loss_terms.setdefault(name, []).append(value)
+
+    def _add_extra_losses_to_total(self, extra_loss_terms, total_loss_dict, L):
+        if total_loss_dict is None:
+            first_name = next(iter(extra_loss_terms))
+            total_loss_dict = {'loss': extra_loss_terms[first_name][0].new_zeros(())}
+        for loss_name, loss_values in extra_loss_terms.items():
+            if not loss_values:
+                continue
+            mean_loss = sum(loss_values) / float(L)
+            total_loss_dict['loss'] = total_loss_dict['loss'] + mean_loss
+            total_loss_dict[loss_name] = mean_loss
+        return total_loss_dict
+
     def _eval_metrics(self, output, target):
         acc_metrics = np.zeros(len(self.metrics))
         output = output.cpu().data.numpy()
@@ -256,6 +287,7 @@ class SpikeTTrainer(BaseTrainer):
         losses = {}
         total_batch_losses = None
         new_target = None
+        extra_loss_terms = {}
 
         prev_super_states = {'image': None}
         for l in range(L):
@@ -269,6 +301,15 @@ class SpikeTTrainer(BaseTrainer):
             new_predicted_targets, new_super_states, new_states_lstm = self.model(item,
                                                                                   prev_super_states['image'],
                                                                                   prev_states_lstm)
+            aux_losses, aux_outputs = self._extract_auxiliary_payload(new_super_states)
+            coarse_prediction = aux_outputs.get('coarse_prediction')
+            coarse_weight = float(aux_outputs.get('coarse_weight', 0.0))
+            if torch.is_tensor(coarse_prediction) and coarse_weight > 0.0:
+                coarse_target = item['depth_image'].to(self.gpu)
+                coarse_loss = coarse_weight * self._compute_primary_loss(coarse_prediction, coarse_target)
+                self._accumulate_extra_loss(extra_loss_terms, 'L_coarse', coarse_loss)
+            for loss_name, loss_value in aux_losses.items():
+                self._accumulate_extra_loss(extra_loss_terms, loss_name, loss_value)
 
             grad_loss_frames_entries = {}
             for key, value in new_predicted_targets.items():
@@ -391,10 +432,16 @@ class SpikeTTrainer(BaseTrainer):
                     groundtruth_targets.append(new_target.clone())
 
             prev_states_lstm = new_states_lstm
-            prev_super_states = new_super_states
+            prev_super_states = {
+                key: value for key, value in new_super_states.items()
+                if key not in ('aux_losses', 'aux_outputs')
+            }
+            if 'image' not in prev_super_states:
+                prev_super_states['image'] = None
         for key, value in losses.items():
             total_batch_losses = self.calculate_total_batch_loss(losses[key], total_batch_losses, L)
             #print("total batch loss: ", key, total_batch_losses['loss'])
+        total_batch_losses = self._add_extra_losses_to_total(extra_loss_terms, total_batch_losses, L)
 
         return total_batch_losses, \
             predicted_targets if record else None, \
