@@ -17,6 +17,15 @@ Jiyuan Zhang*, Lulu Tang*, Zhaofei Yu $\dagger$, Jiwen Lu and Tiejun Huang
  European Conference on Computer Vision [**ECCV 2022**].
  __________________________________________________
 
+## Experiment Docs
+
+For the maintained SpikeMamba experiment history and recent training / evaluation summaries, start from:
+
+- `README_EXPERIMENT_HISTORY.md`
+- `README_CODE.md`
+- `README_ARCHITECTURE.md`
+- `README_DATA_FLOW.md`
+
 ## Code
 
 * The cleaner and compact version will be soonly updated in this repository. 
