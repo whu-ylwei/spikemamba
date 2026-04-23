@@ -230,20 +230,33 @@ def main_worker(gpu, ngpus_per_node, args):
                                                 recurrency=recurrency['validation']
                                                 )
 
-    # Set up data loaders
+    # Set up data loaders. Distributed samplers are valid only after init_process_group().
     kwargs = {'num_workers': config['data_loader']['num_workers'],
               'pin_memory': config['data_loader']['pin_memory']} if config['cuda'] else {}
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    data_loader = DataLoader(train_dataset, batch_size=int(config['data_loader']['batch_size']/ ngpus_per_node),
-                            #  shuffle=config['data_loader']['shuffle'],
-                             sampler=train_sampler,
-                             **kwargs)
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        validation_sampler = torch.utils.data.distributed.DistributedSampler(validation_dataset, shuffle=False)
+        train_shuffle = False
+    else:
+        train_sampler = None
+        validation_sampler = None
+        train_shuffle = config['data_loader']['shuffle']
 
-    validation_sampler = torch.utils.data.distributed.DistributedSampler(validation_dataset)
-    valid_data_loader = DataLoader(validation_dataset, batch_size=int(config['data_loader']['batch_size']/ ngpus_per_node),
-                                #    shuffle=config['data_loader']['shuffle'],
-                                   sampler=validation_sampler,
-                                   **kwargs)
+    data_loader = DataLoader(
+        train_dataset,
+        batch_size=int(config['data_loader']['batch_size'] / ngpus_per_node),
+        shuffle=train_shuffle,
+        sampler=train_sampler,
+        **kwargs
+    )
+
+    valid_data_loader = DataLoader(
+        validation_dataset,
+        batch_size=int(config['data_loader']['batch_size'] / ngpus_per_node),
+        shuffle=False,
+        sampler=validation_sampler,
+        **kwargs
+    )
 
     config['model']['gpu'] = args.gpu
     config['model']['every_x_rgb_frame'] = config['data_loader']['train']['every_x_rgb_frame']
@@ -331,6 +344,8 @@ def main():
             assert not os.path.exists(path), "Path {} already exists!".format(path)
     assert config is not None
     args.config = config
+    if args.gpu is None and not args.multiprocessing_distributed:
+        args.gpu = int(config.get('gpu', 0))
 
     if args.multiprocessing_distributed:
         print("---- Distributed Training ----")
