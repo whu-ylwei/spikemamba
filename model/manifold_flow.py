@@ -20,6 +20,34 @@ def _sanitize_depth(depth):
     return clean_depth, valid_mask
 
 
+def _match_feature_channels(feature, target_channels):
+    current_channels = feature.shape[1]
+    if current_channels == target_channels:
+        return feature
+
+    if current_channels > target_channels:
+        if current_channels % target_channels == 0:
+            group_size = current_channels // target_channels
+            b, _, h, w = feature.shape
+            return feature.reshape(b, target_channels, group_size, h, w).mean(dim=2)
+
+        b, _, h, w = feature.shape
+        pooled = F.adaptive_avg_pool1d(
+            feature.permute(0, 2, 3, 1).reshape(b * h * w, 1, current_channels),
+            target_channels,
+        )
+        return pooled.reshape(b, h, w, target_channels).permute(0, 3, 1, 2)
+
+    repeat_times = (target_channels + current_channels - 1) // current_channels
+    return feature.repeat(1, repeat_times, 1, 1)[:, :target_channels, :, :]
+
+
+def _normalize_feature_statistics(feature):
+    mean = feature.mean(dim=(2, 3), keepdim=True)
+    std = feature.std(dim=(2, 3), keepdim=True, unbiased=False).clamp_min(1e-6)
+    return (feature - mean) / std
+
+
 class _DepthDownsampleEncoder(nn.Module):
     def __init__(self, in_channels, base_channels, latent_channels, norm=None):
         super().__init__()
@@ -109,6 +137,7 @@ class ConditionedDepthManifoldFlow(nn.Module):
         self.flow_steps = max(1, flow_steps)
         self.blend_alpha = float(config.get("blend_alpha", 0.0))
         self.rollout_noise_std = float(config.get("rollout_noise_std", 0.0))
+        self.encoder_feature_scale = float(config.get("encoder_feature_scale", 1.0))
         self.loss_weights = {
             "coarse": float(config.get("coarse_weight", 0.5)),
             "reconstruction": float(config.get("reconstruction_weight", 0.1)),
@@ -125,6 +154,53 @@ class ConditionedDepthManifoldFlow(nn.Module):
             num_resblocks=flow_resblocks,
         )
 
+    def _fuse_encoder_features(self, condition_latent, encoder_features):
+        if self.encoder_feature_scale == 0.0 or encoder_features is None:
+            return condition_latent
+
+        if torch.is_tensor(encoder_features):
+            encoder_features = [encoder_features]
+
+        target_hw = condition_latent.shape[-2:]
+        target_channels = condition_latent.shape[1]
+        fused_encoder_latent = None
+        num_valid_features = 0
+
+        for feature in encoder_features:
+            if feature is None:
+                continue
+            if not torch.is_tensor(feature):
+                raise TypeError(
+                    f"Expected encoder feature tensor, got {type(feature)} in manifold flow conditioning."
+                )
+            if feature.ndim != 4:
+                raise ValueError(
+                    f"Expected 4D encoder feature map [B,C,H,W], got shape {tuple(feature.shape)}."
+                )
+
+            aligned_feature = feature.to(dtype=condition_latent.dtype, device=condition_latent.device)
+            if aligned_feature.shape[-2:] != target_hw:
+                aligned_feature = F.interpolate(
+                    aligned_feature,
+                    size=target_hw,
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            aligned_feature = _match_feature_channels(aligned_feature, target_channels)
+            aligned_feature = _normalize_feature_statistics(aligned_feature)
+
+            if fused_encoder_latent is None:
+                fused_encoder_latent = aligned_feature
+            else:
+                fused_encoder_latent = fused_encoder_latent + aligned_feature
+            num_valid_features += 1
+
+        if fused_encoder_latent is None:
+            return condition_latent
+
+        fused_encoder_latent = fused_encoder_latent / float(num_valid_features)
+        return condition_latent + self.encoder_feature_scale * fused_encoder_latent
+
     def _rollout_latent(self, condition_latent):
         if self.rollout_noise_std > 0:
             latent_state = torch.randn_like(condition_latent) * self.rollout_noise_std
@@ -138,8 +214,9 @@ class ConditionedDepthManifoldFlow(nn.Module):
             latent_state = latent_state + velocity * step_size
         return latent_state
 
-    def forward(self, coarse_depth, target_depth=None, prev_latent_state=None):
+    def forward(self, coarse_depth, encoder_features=None, target_depth=None, prev_latent_state=None):
         condition_latent = self.condition_encoder(coarse_depth)
+        condition_latent = self._fuse_encoder_features(condition_latent, encoder_features)
         refined_latent = self._rollout_latent(condition_latent)
         refined_depth = self.target_decoder(refined_latent)
         if self.blend_alpha > 0.0:
@@ -149,6 +226,7 @@ class ConditionedDepthManifoldFlow(nn.Module):
         auxiliary_outputs = {
             "coarse_prediction": coarse_depth,
             "coarse_weight": self.loss_weights["coarse"],
+            "encoder_feature_scale": self.encoder_feature_scale,
         }
 
         target_latent = None

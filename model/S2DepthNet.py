@@ -240,6 +240,7 @@ class S2DepthTransformerUNetConv(BaseERGB2Depth):
 
             prediction, aux_losses, aux_outputs, manifold_state = self.manifold_flow(
                 coarse_prediction,
+                encoder_features=encoded_xs,
                 target_depth=target_depth,
                 prev_latent_state=previous_latent_state,
             )
