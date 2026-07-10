@@ -145,8 +145,19 @@ class ConditionedDepthManifoldFlow(nn.Module):
             "geometry": float(config.get("geometry_weight", 0.05)),
         }
 
+        # Residual-bridge refactor switches (route B; see manifold重构方案.md).
+        # All False + legacy config reproduces the original noise-based flow behaviour.
+        self.residual_output = bool(config.get("residual_output", True))      # C3: coarse + delta anchor
+        self.data_coupling = bool(config.get("data_coupling", True))          # C2: coarse -> gt coupling
+        self.share_encoder = bool(config.get("share_encoder", True))          # C4: single shared encoder
+        self.start_from_coarse = bool(config.get("start_from_coarse", True))  # C1: rollout starts at coarse latent
+
         self.condition_encoder = _DepthDownsampleEncoder(1, base_channels, latent_channels)
-        self.target_encoder = _DepthDownsampleEncoder(1, base_channels, latent_channels)
+        if self.share_encoder:
+            # Same instance so z_coarse and z_gt live on the same latent manifold (C4).
+            self.target_encoder = self.condition_encoder
+        else:
+            self.target_encoder = _DepthDownsampleEncoder(1, base_channels, latent_channels)
         self.target_decoder = _DepthUpsampleDecoder(latent_channels, base_channels)
         self.velocity_field = _ConditionalVelocityField(
             latent_channels=latent_channels,
@@ -187,7 +198,7 @@ class ConditionedDepthManifoldFlow(nn.Module):
                     align_corners=False,
                 )
             aligned_feature = _match_feature_channels(aligned_feature, target_channels)
-            aligned_feature = _normalize_feature_statistics(aligned_feature)
+            # C5: drop per-image normalization to preserve absolute (metric-depth) scale.
 
             if fused_encoder_latent is None:
                 fused_encoder_latent = aligned_feature
@@ -202,14 +213,18 @@ class ConditionedDepthManifoldFlow(nn.Module):
         return condition_latent + self.encoder_feature_scale * fused_encoder_latent
 
     def _rollout_latent(self, condition_latent):
-        if self.rollout_noise_std > 0:
+        if self.start_from_coarse:
+            # C1: start on the manifold at the coarse latent; the flow only refines.
+            latent_state = condition_latent
+        elif self.rollout_noise_std > 0:
             latent_state = torch.randn_like(condition_latent) * self.rollout_noise_std
         else:
             latent_state = torch.zeros_like(condition_latent)
 
         step_size = 1.0 / float(self.flow_steps)
         for step in range(self.flow_steps):
-            time_value = (step + 0.5) * step_size
+            # With data coupling the velocity already points coarse->gt, so t accumulates from 0.
+            time_value = step * step_size if self.start_from_coarse else (step + 0.5) * step_size
             velocity = self.velocity_field(latent_state, condition_latent, time_value)
             latent_state = latent_state + velocity * step_size
         return latent_state
@@ -218,9 +233,14 @@ class ConditionedDepthManifoldFlow(nn.Module):
         condition_latent = self.condition_encoder(coarse_depth)
         condition_latent = self._fuse_encoder_features(condition_latent, encoder_features)
         refined_latent = self._rollout_latent(condition_latent)
-        refined_depth = self.target_decoder(refined_latent)
-        if self.blend_alpha > 0.0:
-            refined_depth = self.blend_alpha * coarse_depth + (1.0 - self.blend_alpha) * refined_depth
+        decoded = self.target_decoder(refined_latent)
+        if self.residual_output:
+            # C3: anchor to coarse; the decoder produces a depth increment (delta).
+            refined_depth = coarse_depth + decoded
+        else:
+            refined_depth = decoded
+            if self.blend_alpha > 0.0:
+                refined_depth = self.blend_alpha * coarse_depth + (1.0 - self.blend_alpha) * refined_depth
 
         auxiliary_losses = {}
         auxiliary_outputs = {
@@ -241,12 +261,16 @@ class ConditionedDepthManifoldFlow(nn.Module):
                     * _masked_l1(reconstructed_target, clean_target, valid_mask)
                 )
 
-            noise = torch.randn_like(target_latent)
+            if self.data_coupling:
+                # C2: straight path from the coarse latent to the GT latent.
+                z0 = condition_latent
+            else:
+                z0 = torch.randn_like(target_latent)
             time_value = torch.rand(
                 target_latent.shape[0], 1, 1, 1, device=target_latent.device, dtype=target_latent.dtype
             )
-            latent_state = (1.0 - time_value) * noise + time_value * target_latent
-            target_velocity = target_latent - noise
+            latent_state = (1.0 - time_value) * z0 + time_value * target_latent
+            target_velocity = target_latent - z0
             predicted_velocity = self.velocity_field(latent_state, condition_latent, time_value)
             if self.loss_weights["flow"] > 0.0:
                 auxiliary_losses["L_flow"] = (

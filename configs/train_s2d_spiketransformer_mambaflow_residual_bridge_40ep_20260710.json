@@ -1,0 +1,152 @@
+{
+    "name": "train_s2d_MambaFlow_residual_bridge_40ep_20260710_bs2",
+    "cuda": true,
+    "gpu": 0,
+    "data_loader": {
+        "train": {
+            "type": "SequenceSynchronizedFramesSpikesDENSEDataset",
+            "base_folder": "DENSE/train",
+            "depth_folder": "depth/data",
+            "frame_folder": "rgb/frames",
+            "flow_folder": "",
+            "spike_folder": "spike/r128",
+            "proba_pause_when_running": 0.0,
+            "proba_pause_when_paused": 0.0,
+            "step_size": 1,
+            "clip_distance": 1000.0,
+            "every_x_rgb_frame": 1,
+            "scale_factor": 1,
+            "baseline": "s"
+        },
+        "validation": {
+            "type": "SequenceSynchronizedFramesSpikesDENSEDataset",
+            "base_folder": "DENSE/validation",
+            "frame_folder": "rgb/frames",
+            "depth_folder": "depth/data",
+            "flow_folder": "",
+            "spike_folder": "spike/r128",
+            "proba_pause_when_running": 0.0,
+            "proba_pause_when_paused": 0.0,
+            "step_size": 1,
+            "clip_distance": 1000.0,
+            "every_x_rgb_frame": 1,
+            "scale_factor": 1,
+            "baseline": "s"
+        },
+        "batch_size": 2,
+        "num_workers": 4,
+        "pin_memory": true,
+        "normalize": true,
+        "shuffle": true
+    },
+    "lr_scheduler_type": "MultiStepLR",
+    "lr_scheduler_freq": 1,
+    "lr_scheduler": {
+        "milestones": [
+            999
+        ],
+        "gamma": 0.5
+    },
+    "optimizer_type": "Adam",
+    "optimizer": {
+        "lr": 0.0001,
+        "weight_decay": 0
+    },
+    "loss": {
+        "type": "scale_invariant_loss",
+        "config": {
+            "weight": 1.0,
+            "n_lambda": 1.0
+        }
+    },
+    "grad_loss": {
+        "weight": 0.25
+    },
+    "metrics": [
+        "mse",
+        "abs_rel_diff",
+        "scale_invariant_error",
+        "median_error"
+    ],
+    "trainer": {
+        "epochs": 40,
+        "sequence_length": 2,
+        "save_dir": "runs/train/",
+        "save_freq": 20,
+        "verbosity": 1,
+        "monitor": "val_loss",
+        "monitor_mode": "min",
+        "num_previews": 1,
+        "num_val_previews": 1,
+        "still_previews": false,
+        "movie": false,
+        "grid_loss": true,
+        "loss_composition": "image",
+        "grad_clip_norm": 1.0,
+        "loss_weights": [
+            1
+        ]
+    },
+    "arch": "S2DepthTransformerUNetConv",
+    "use_phased_arch": false,
+    "model": {
+        "num_bins_rgb": 128,
+        "num_bins_events": 128,
+        "skip_type": "sum",
+        "recurrent_block_type": "none",
+        "state_combination": "none",
+        "spatial_resolution": [
+            112,
+            112
+        ],
+        "num_encoders": 3,
+        "base_num_channels": 96,
+        "num_residual_blocks": 2,
+        "use_upsample_conv": true,
+        "norm": "none",
+        "swin_depths": [
+            2,
+            2,
+            6
+        ],
+        "swin_num_heads": [
+            3,
+            6,
+            12
+        ],
+        "swin_out_indices": [
+            0,
+            1,
+            2
+        ],
+        "swin_patch_size": [
+            32,
+            2,
+            2
+        ],
+        "ape": true,
+        "new_v": 4,
+        "output_activation": "identity",
+        "mamba_backend": "mamba_ssm",
+        "mamba_require_ssm": true,
+        "manifold_flow": {
+            "enabled": true,
+            "latent_channels": 96,
+            "base_channels": 48,
+            "flow_hidden_channels": 128,
+            "flow_resblocks": 2,
+            "flow_steps": 6,
+            "rollout_noise_std": 0.0,
+            "blend_alpha": 0.0,
+            "residual_output": true,
+            "data_coupling": true,
+            "share_encoder": true,
+            "start_from_coarse": true,
+            "encoder_feature_scale": 0.0,
+            "coarse_weight": 1.0,
+            "reconstruction_weight": 0.0,
+            "flow_weight": 0.1,
+            "geometry_weight": 0.05
+        }
+    }
+}
