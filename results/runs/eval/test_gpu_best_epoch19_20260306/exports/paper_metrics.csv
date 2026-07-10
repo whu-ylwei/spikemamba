@@ -1,8 +1,0 @@
-metric,direction,value
-Abs Rel,lower_is_better,0.779262
-Sq Rel,lower_is_better,1.945662
-RMS log,lower_is_better,1.891718
-SI log,lower_is_better,1.160968
-delta<1.25,higher_is_better,0.154195
-delta<1.25^2,higher_is_better,0.228663
-delta<1.25^3,higher_is_better,0.290279

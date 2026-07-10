@@ -1,8 +1,0 @@
-metric,direction,prev_0308_offline_eval_20260311,curr_0308_sys_eval_20260311,delta_curr_minus_prev,improved_in_curr
-Abs Rel,down,0.818071,0.818072,0.000001,no
-Sq Rel,down,25.676790,25.676831,0.000041,no
-RMS log,down,0.802200,0.802202,0.000002,no
-SI log,down,0.456358,0.456359,0.000001,no
-delta<1.25,up,0.560028,0.560016,-0.000012,no
-delta<1.25^2,up,0.694676,0.694672,-0.000004,no
-delta<1.25^3,up,0.770290,0.770288,-0.000002,no

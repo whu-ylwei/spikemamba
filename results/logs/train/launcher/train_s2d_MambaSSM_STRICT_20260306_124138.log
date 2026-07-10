@@ -1,6 +1,0 @@
-Traceback (most recent call last):
-  File "/root/shared-nvme/spikemamba/train_parallel.py", line 9, in <module>
-    from model.loss import *
-  File "/root/shared-nvme/spikemamba/model/loss.py", line 3, in <module>
-    from kornia.filters.sobel import spatial_gradient, sobel
-ModuleNotFoundError: No module named 'kornia'

@@ -36,6 +36,5 @@ ALL_TRAIN_LOGS_PARAMS_EVAL_CHRONOLOGY_*.md
 README_TEST_RESULTS_*.md
 README_TRAINING_*.md
 
-# Allow the packaged results snapshot to be tracked.
-!results/
-!results/**
+# Training results snapshot (excluded from the core-code branch)
+results/

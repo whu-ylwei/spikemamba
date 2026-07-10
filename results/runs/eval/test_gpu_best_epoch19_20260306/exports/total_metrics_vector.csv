@@ -1,7 +1,0 @@
-index,metric,value
-1,mse,165621.948
-2,abs_rel_diff,0.779262469
-3,scale_invariant_error,114038.338
-4,median_error,30.4649729
-5,mean_error,211.746402
-6,rms_linear,388.73931
