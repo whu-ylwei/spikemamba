@@ -22,7 +22,7 @@ from os.path import join
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import ConcatDataset
+from torch.utils.data import ConcatDataset, DataLoader, Subset
 
 sys.path.insert(0, ".")
 
@@ -37,6 +37,10 @@ SEED = 111
 GRAD_CLIP = 1.0
 GRAD_LOSS_W = 0.25
 SPATIAL = (112, 112)
+# 3a: scale-invariance strength for the SI-log loss. 1.0 = fully scale-invariant (legacy);
+# <1.0 keeps part of the global-scale penalty to improve absolute accuracy (abs_rel).
+# Set from config manifold_flow.si_n_lambda in main().
+SI_N_LAMBDA = 1.0
 
 
 def build_concat(cfg, split_key):
@@ -82,6 +86,11 @@ def batchify(item):
     return {k: (v.unsqueeze(0) if torch.is_tensor(v) else v) for k, v in item.items()}
 
 
+def _seq_collate(batch):
+    """batch_size=1 passthrough; resize happens here so DataLoader workers do it in parallel."""
+    return resize_sequence(batch[0])
+
+
 def run_sequence(model, sequence, dev, train, opt=None):
     """One temporal sequence: mirrors SpikeTTrainer.forward_pass_sequence loss composition."""
     prev_lstm = {"image": None}
@@ -95,7 +104,7 @@ def run_sequence(model, sequence, dev, train, opt=None):
         pred = pred_dict["image"]
         tgt = b["depth_image"].to(dev)
 
-        loss = scale_invariant_loss(pred, tgt, weight=1.0, n_lambda=1.0)
+        loss = scale_invariant_loss(pred, tgt, weight=1.0, n_lambda=SI_N_LAMBDA)
         loss = loss + GRAD_LOSS_W * multi_scale_grad_loss(pred, tgt)
 
         aux = super_states.get("aux_losses", {}) if isinstance(super_states, dict) else {}
@@ -104,7 +113,7 @@ def run_sequence(model, sequence, dev, train, opt=None):
         coarse = aux_out.get("coarse_prediction")
         cw = float(aux_out.get("coarse_weight", 0.0))
         if torch.is_tensor(coarse) and cw > 0.0:
-            loss = loss + cw * scale_invariant_loss(coarse, tgt, weight=1.0, n_lambda=1.0)
+            loss = loss + cw * scale_invariant_loss(coarse, tgt, weight=1.0, n_lambda=SI_N_LAMBDA)
         for _, val in aux.items():
             if torch.is_tensor(val):
                 loss = loss + val
@@ -138,7 +147,7 @@ def val_loss_only(model, sequence, dev):
         pred_dict, super_states, prev_lstm = model(b, prev_super["image"], prev_lstm)
         pred = pred_dict["image"]
         tgt = b["depth_image"].to(dev)
-        l = scale_invariant_loss(pred, tgt, 1.0, 1.0) + GRAD_LOSS_W * multi_scale_grad_loss(pred, tgt)
+        l = scale_invariant_loss(pred, tgt, 1.0, SI_N_LAMBDA) + GRAD_LOSS_W * multi_scale_grad_loss(pred, tgt)
         losses.append(float(l.item()))
         prev_super = {k: v for k, v in super_states.items()
                       if k not in ("aux_losses", "aux_outputs")} if isinstance(super_states, dict) else {"image": None}
@@ -157,10 +166,17 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--config", default=CONFIG,
                     help="Training config JSON (defaults to the seq2 40ep baseline).")
+    ap.add_argument("--resume", default=None,
+                    help="Checkpoint (model_last.pth.tar) to warm-start weights from (stage-2 continue).")
+    ap.add_argument("--lr", type=float, default=None,
+                    help="Override optimizer lr (e.g. halved lr for the continue stage).")
+    ap.add_argument("--num-workers", type=int, default=4,
+                    help="DataLoader worker processes for parallel spike-file prefetch (I/O bound).")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
-    jsonl = open(join(args.out, "epochs.jsonl"), "w")
+    # Append when resuming so both stages accumulate in one epochs.jsonl.
+    jsonl = open(join(args.out, "epochs.jsonl"), "a" if args.resume else "w")
 
     cfg = json.load(open(args.config))
     m = cfg["model"]
@@ -170,6 +186,11 @@ def main():
     m["loss_composition"] = cfg["trainer"]["loss_composition"]
     m["manifold_flow"]["enabled"] = (args.flow == "on")
 
+    # 3a: pick up scale-invariance strength from config (default 1.0 = legacy).
+    global SI_N_LAMBDA
+    SI_N_LAMBDA = float(m.get("manifold_flow", {}).get("si_n_lambda", 1.0))
+    print(f"[cfg] SI_N_LAMBDA={SI_N_LAMBDA}", flush=True)
+
     torch.manual_seed(SEED)
     np.random.seed(SEED)
     dev = torch.device("cuda:0")
@@ -178,6 +199,13 @@ def main():
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[{args.flow}] trainable params: {n_params}", flush=True)
 
+    start_epoch = 0
+    if args.resume:
+        ckpt = torch.load(args.resume, map_location=dev)
+        model.load_state_dict(ckpt["state_dict"])
+        start_epoch = int(ckpt.get("epoch", 0))
+        print(f"[{args.flow}] resumed from {args.resume} @ep{start_epoch}", flush=True)
+
     train_ds, train_subs = build_concat(cfg, "train")
     val_ds, val_subs = build_concat(cfg, "validation")
     n_train = len(train_ds) if args.max_train_seq < 0 else min(len(train_ds), args.max_train_seq)
@@ -185,26 +213,42 @@ def main():
     print(f"[{args.flow}] train seqs: {n_train}/{len(train_ds)} from {len(train_subs)} subfolders; "
           f"val seqs: {n_val}/{len(val_ds)}", flush=True)
 
-    opt = torch.optim.Adam(model.parameters(), lr=cfg["optimizer"]["lr"],
+    lr = args.lr if args.lr is not None else cfg["optimizer"]["lr"]
+    opt = torch.optim.Adam(model.parameters(), lr=lr,
                            weight_decay=cfg["optimizer"]["weight_decay"])
+    print(f"[{args.flow}] lr={lr}", flush=True)
 
     # Fixed data order across arms (seeded permutation of the same indices).
+    # DataLoader workers only prefetch/resize; the fixed order is baked into a Subset
+    # so ordering is identical to the pre-DataLoader single-process version.
     g = torch.Generator().manual_seed(SEED)
     train_order = torch.randperm(len(train_ds), generator=g).tolist()[:n_train]
     val_order = list(range(n_val))
 
+    train_loader = DataLoader(
+        Subset(train_ds, train_order), batch_size=1, shuffle=False,
+        num_workers=args.num_workers, collate_fn=_seq_collate,
+        pin_memory=False, persistent_workers=(args.num_workers > 0),
+        prefetch_factor=(2 if args.num_workers > 0 else None),
+    )
+    val_loader = DataLoader(
+        Subset(val_ds, val_order), batch_size=1, shuffle=False,
+        num_workers=args.num_workers, collate_fn=_seq_collate,
+        pin_memory=False, persistent_workers=(args.num_workers > 0),
+        prefetch_factor=(2 if args.num_workers > 0 else None),
+    )
+
     best = {"val_loss": float("inf"), "epoch": -1}
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch + 1, start_epoch + args.epochs + 1):
         t0 = time.time()
         model.train()
         tr_losses = []
         nan_hit = False
-        for idx in train_order:
-            seq = resize_sequence(train_ds[idx])
+        for seq in train_loader:
             tl, gnorm = run_sequence(model, seq, dev, train=True, opt=opt)
             if not np.isfinite(tl):
                 nan_hit = True
-                print(f"[{args.flow}] NON-FINITE train loss at epoch {epoch} idx {idx}", flush=True)
+                print(f"[{args.flow}] NON-FINITE train loss at epoch {epoch}", flush=True)
                 break
             tr_losses.append(tl)
         if nan_hit:
@@ -216,8 +260,7 @@ def main():
         vl_list = []
         abs_rel, rmse, sie, med = [], [], [], []
         with torch.no_grad():
-            for idx in val_order:
-                seq = resize_sequence(val_ds[idx])
+            for seq in val_loader:
                 vl, pred, tgt = val_loss_only(model, seq, dev)
                 vl_list.append(vl)
                 p = pred.detach().cpu().numpy()
@@ -247,6 +290,9 @@ def main():
             best = {**rec}
             torch.save({"epoch": epoch, "state_dict": model.state_dict(), "flow": args.flow},
                        join(args.out, "model_best.pth.tar"))
+        # Always keep the latest weights so a continue stage can warm-start from here.
+        torch.save({"epoch": epoch, "state_dict": model.state_dict(), "flow": args.flow},
+                   join(args.out, "model_last.pth.tar"))
 
     summary = {"flow": args.flow, "params": n_params, "epochs_run": epoch,
                "n_train": n_train, "n_val": n_val, "best": best}

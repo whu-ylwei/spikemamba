@@ -14,6 +14,23 @@ def _masked_l1(prediction, target, mask):
     return prediction.new_zeros(())
 
 
+def _weighted_metric_l1(prediction, target, valid_mask, far_gamma=0.0):
+    """Linear-space (metric) L1 between refined depth and target, with optional
+    far-depth down-weighting w = exp(-far_gamma * target). Both depths are the
+    normalized [0,1] representation used in training (exp decode happens later),
+    so target itself is a monotonic proxy for range. gamma=0 -> uniform (legacy)."""
+    diff = torch.abs(prediction - target)
+    if far_gamma > 0.0:
+        weight = torch.exp(-far_gamma * target.clamp_min(0.0))
+        diff = diff * weight
+    if valid_mask is None:
+        return diff.mean()
+    valid = valid_mask.expand_as(diff)
+    if valid.any():
+        return diff[valid].mean()
+    return prediction.new_zeros(())
+
+
 def _sanitize_depth(depth):
     valid_mask = torch.isfinite(depth)
     clean_depth = torch.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
@@ -143,7 +160,15 @@ class ConditionedDepthManifoldFlow(nn.Module):
             "reconstruction": float(config.get("reconstruction_weight", 0.1)),
             "flow": float(config.get("flow_weight", 0.1)),
             "geometry": float(config.get("geometry_weight", 0.05)),
+            # Precision-enhancement losses (2026-07-30). Default 0.0 -> legacy behaviour.
+            "refined_metric": float(config.get("refined_metric_weight", 0.0)),  # 3b: linear-space L1/berHu on refined
+            "delta_reg": float(config.get("delta_reg_weight", 0.0)),            # 5a: penalize flow delta magnitude
         }
+        # 5b: down-weight far-depth pixels in refined metric loss (exp decode amplifies far error).
+        # w = exp(-gamma * target); gamma=0 -> uniform weighting (legacy).
+        self.far_downweight_gamma = float(config.get("far_downweight_gamma", 0.0))
+        # 4: latent integrator for the flow rollout. "euler" (legacy) or "heun" (2nd order).
+        self.flow_integrator = str(config.get("flow_integrator", "euler")).lower()
 
         # Residual-bridge refactor switches (route B; see manifold重构方案.md).
         # All False + legacy config reproduces the original noise-based flow behaviour.
@@ -226,7 +251,14 @@ class ConditionedDepthManifoldFlow(nn.Module):
             # With data coupling the velocity already points coarse->gt, so t accumulates from 0.
             time_value = step * step_size if self.start_from_coarse else (step + 0.5) * step_size
             velocity = self.velocity_field(latent_state, condition_latent, time_value)
-            latent_state = latent_state + velocity * step_size
+            if self.flow_integrator == "heun" and self.start_from_coarse:
+                # 4: Heun (2nd-order) predictor-corrector for a more accurate latent integration.
+                predicted = latent_state + velocity * step_size
+                next_time = (step + 1) * step_size
+                velocity_next = self.velocity_field(predicted, condition_latent, next_time)
+                latent_state = latent_state + 0.5 * (velocity + velocity_next) * step_size
+            else:
+                latent_state = latent_state + velocity * step_size
         return latent_state
 
     def forward(self, coarse_depth, encoder_features=None, target_depth=None, prev_latent_state=None):
@@ -234,6 +266,7 @@ class ConditionedDepthManifoldFlow(nn.Module):
         condition_latent = self._fuse_encoder_features(condition_latent, encoder_features)
         refined_latent = self._rollout_latent(condition_latent)
         decoded = self.target_decoder(refined_latent)
+        flow_delta = decoded  # 5a: in residual mode this is the depth increment added to coarse.
         if self.residual_output:
             # C3: anchor to coarse; the decoder produces a depth increment (delta).
             refined_depth = coarse_depth + decoded
@@ -249,9 +282,23 @@ class ConditionedDepthManifoldFlow(nn.Module):
             "encoder_feature_scale": self.encoder_feature_scale,
         }
 
+        # 5a: regularize the flow delta magnitude (curbs far-depth outliers). Target-free.
+        if self.residual_output and self.loss_weights["delta_reg"] > 0.0:
+            auxiliary_losses["L_delta_reg"] = (
+                self.loss_weights["delta_reg"] * (flow_delta ** 2).mean()
+            )
+
         target_latent = None
         if target_depth is not None:
             clean_target, valid_mask = _sanitize_depth(target_depth)
+
+            # 3b: direct metric-space (linear) supervision on the refined depth, with
+            # optional far-depth down-weighting (5b). Aligns training with abs_rel/RMS.
+            if self.loss_weights["refined_metric"] > 0.0:
+                auxiliary_losses["L_refined_metric"] = (
+                    self.loss_weights["refined_metric"]
+                    * _weighted_metric_l1(refined_depth, clean_target, valid_mask, self.far_downweight_gamma)
+                )
             target_latent = self.target_encoder(clean_target)
             reconstructed_target = self.target_decoder(target_latent)
 
