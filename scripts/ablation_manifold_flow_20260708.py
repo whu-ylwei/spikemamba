@@ -37,6 +37,12 @@ SEED = 111
 GRAD_CLIP = 1.0
 GRAD_LOSS_W = 0.25
 SPATIAL = (112, 112)
+# Preprocessing mode for mapping raw 260x346 -> SPATIAL.
+#   "resize":     bilinear/nearest interpolate (legacy residual-bridge behavior).
+#   "centercrop": center crop, matching the 0320 MambaSSM eval pipeline
+#                 (utils.data_augmentation.CenterCrop) for a same-scale comparison.
+# Set from config["preproc"] in main(); default keeps legacy resize behavior.
+PREPROC_MODE = "resize"
 # 3a: scale-invariance strength for the SI-log loss. 1.0 = fully scale-invariant (legacy);
 # <1.0 keeps part of the global-scale penalty to improve absolute accuracy (abs_rel).
 # Set from config manifold_flow.si_n_lambda in main().
@@ -68,17 +74,36 @@ def build_concat(cfg, split_key):
     return ConcatDataset(datasets), subs
 
 
+def _center_crop_chw(v, Ht, Wt):
+    """Center-crop a [C,H,W] tensor to (Ht,Wt), matching utils.data_augmentation.CenterCrop
+    (pure slicing, no scaling). Raises if the target exceeds the source dims."""
+    _, H, W = v.shape
+    if Ht > H or Wt > W:
+        raise ValueError(f"CenterCrop {(Ht, Wt)} exceeds source {(H, W)}")
+    i = int(round((H - Ht) / 2.0))
+    j = int(round((W - Wt) / 2.0))
+    return v[:, i:i + Ht, j:j + Wt]
+
+
 def resize_sequence(sequence):
-    """Resize spike + depth tensors to SPATIAL (raw 260x346 breaks 2x2 folding)."""
+    """Map spike + depth tensors from raw 260x346 to SPATIAL.
+
+    PREPROC_MODE="resize": bilinear/nearest interpolate (legacy). PREPROC_MODE="centercrop":
+    center crop to SPATIAL, matching the 0320 eval pipeline. Either way SPATIAL must have
+    even H,W so the Mamba 2x2 spatial folding works.
+    """
     Ht, Wt = SPATIAL
     for item in sequence:
         for k in list(item.keys()):
             v = item[k]
             if torch.is_tensor(v) and v.ndim == 3:
-                mode = "nearest" if "depth" in k else "bilinear"
-                kw = {} if mode == "nearest" else {"align_corners": False}
-                item[k] = F.interpolate(v.unsqueeze(0).float(), size=(Ht, Wt),
-                                        mode=mode, **kw).squeeze(0)
+                if PREPROC_MODE == "centercrop":
+                    item[k] = _center_crop_chw(v.float(), Ht, Wt)
+                else:
+                    mode = "nearest" if "depth" in k else "bilinear"
+                    kw = {} if mode == "nearest" else {"align_corners": False}
+                    item[k] = F.interpolate(v.unsqueeze(0).float(), size=(Ht, Wt),
+                                            mode=mode, **kw).squeeze(0)
     return sequence
 
 
@@ -191,6 +216,17 @@ def main():
     SI_N_LAMBDA = float(m.get("manifold_flow", {}).get("si_n_lambda", 1.0))
     print(f"[cfg] SI_N_LAMBDA={SI_N_LAMBDA}", flush=True)
 
+    # Preprocessing口径: config["preproc"] = {"mode": "resize"|"centercrop", "size": [H,W]}.
+    # Default keeps legacy resize->112 behavior. "centercrop"+224 matches the 0320 pipeline.
+    global SPATIAL, PREPROC_MODE
+    preproc = cfg.get("preproc", {})
+    PREPROC_MODE = str(preproc.get("mode", "resize")).lower()
+    if "size" in preproc:
+        SPATIAL = tuple(int(x) for x in preproc["size"])
+    elif "spatial_resolution" in m:
+        SPATIAL = tuple(int(x) for x in m["spatial_resolution"])
+    print(f"[cfg] PREPROC_MODE={PREPROC_MODE} SPATIAL={SPATIAL}", flush=True)
+
     torch.manual_seed(SEED)
     np.random.seed(SEED)
     dev = torch.device("cuda:0")
@@ -200,11 +236,24 @@ def main():
     print(f"[{args.flow}] trainable params: {n_params}", flush=True)
 
     start_epoch = 0
+    resumed_best = None
     if args.resume:
         ckpt = torch.load(args.resume, map_location=dev)
         model.load_state_dict(ckpt["state_dict"])
         start_epoch = int(ckpt.get("epoch", 0))
         print(f"[{args.flow}] resumed from {args.resume} @ep{start_epoch}", flush=True)
+        # Inherit the previous stage's best so a continue stage only overwrites
+        # model_best.pth.tar when it genuinely improves (avoids resetting best to inf
+        # and clobbering the stage-1 best on the first continue epoch).
+        _summ = join(os.path.dirname(args.resume), "summary.json")
+        if os.path.exists(_summ):
+            try:
+                resumed_best = json.load(open(_summ)).get("best")
+                if resumed_best:
+                    print(f"[{args.flow}] inherited best val={resumed_best['val_loss']:.5f} "
+                          f"@ep{resumed_best['epoch']}", flush=True)
+            except Exception as e:
+                print(f"[{args.flow}] could not read prior best: {e}", flush=True)
 
     train_ds, train_subs = build_concat(cfg, "train")
     val_ds, val_subs = build_concat(cfg, "validation")
@@ -238,7 +287,7 @@ def main():
         prefetch_factor=(2 if args.num_workers > 0 else None),
     )
 
-    best = {"val_loss": float("inf"), "epoch": -1}
+    best = resumed_best if resumed_best else {"val_loss": float("inf"), "epoch": -1}
     for epoch in range(start_epoch + 1, start_epoch + args.epochs + 1):
         t0 = time.time()
         model.train()

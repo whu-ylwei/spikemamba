@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, ".")
+import scripts.ablation_manifold_flow_20260708 as _abl
 from scripts.ablation_manifold_flow_20260708 import (
     DATAROOT, resize_sequence, batchify, SPATIAL,
 )
@@ -34,6 +35,16 @@ def main():
     m["every_x_rgb_frame"] = cfg["data_loader"]["train"]["every_x_rgb_frame"]
     m["baseline"] = cfg["data_loader"]["train"]["baseline"]
     m["loss_composition"] = cfg["trainer"]["loss_composition"]
+
+    # Mirror training preprocessing (resize vs centercrop, target size) so export口径
+    # matches exactly. resize_sequence reads these module globals at call time.
+    preproc = cfg.get("preproc", {})
+    _abl.PREPROC_MODE = str(preproc.get("mode", "resize")).lower()
+    if "size" in preproc:
+        _abl.SPATIAL = tuple(int(x) for x in preproc["size"])
+    elif "spatial_resolution" in m:
+        _abl.SPATIAL = tuple(int(x) for x in m["spatial_resolution"])
+    print(f"[export] PREPROC_MODE={_abl.PREPROC_MODE} SPATIAL={_abl.SPATIAL}", flush=True)
 
     dev = torch.device("cuda:0")
     model = S2DepthTransformerUNetConv(m).to(dev)
