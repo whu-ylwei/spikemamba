@@ -39,6 +39,46 @@
 - **Q1（信息存在性）**：spike/浅层特征里是否真的含 coarse 缺失的远景信息？（§4 前置探针）
 - **Q2（方法有效性）**：生成式/flow 精修 + 多源条件，在文献中是否已被证明能改善困难区域深度？（§2-§3）
 
+### 1.3 小目标 vs 远距离：同源但不对称，一套架构如何同时兼顾
+
+这是本方案的核心张力——**两个目标都要，但最终 flow 架构是唯一的一套**。必须讲清三点。
+
+**(1) 两者是不同的失败模式，但根因同源。**
+- **远距离**=深度值大的区域，失败源于：exp(5.7·x) 量程指数放大 + spike 远景事件稀疏 + 损失近景主导。
+- **小目标**=占像素少的物体（可近可远），失败源于：主干多级 2×2 下采样把小目标像素合并/抹掉 + 空间细节丢失 + 大区域主导。
+- 二者重叠于"远物常表现为小目标"，但不等价（近处细杆=小目标非远；远处大墙=远非小）。
+- **共同根因**：主干深层那个被下采样的 latent，同时丢掉了「高分辨率空间细节」（伤小目标）和
+  「原始稀疏事件线索」（伤远距离）。coarse 在这两类区域都不可靠。
+
+**(2) 为什么一套架构能同时覆盖两者。**
+flow 要学的事在两种情况下**数学形式完全相同**：给定不可靠的 coarse + 富含高分辨率/原始信息的
+条件，学 p(depth | coarse, rich_condition) 输出修正 Δ。flow **不需要"知道"自己在修小目标还是远区**，
+它只需学到"哪里 coarse 不可靠、且条件里有补足信号"。两类难区共享同一个信息缺口 → 共享同一个
+信息补足机制（多源条件 + 门控残差 flow）。**这就是"架构一定"能成立的根据。**
+
+**(3) 但两者可行性不对称（最须诚实的一点）。**
+
+| | 失败根因 | 信息可恢复性 | 可行性 |
+|---|---|---|---|
+| **小目标** | 主要是主干**下采样**丢细节（架构性） | **高**——细节仍在浅层/原始 spike，只是深层没用好 | **较高** |
+| **远距离** | 下采样 + **spike 物理稀疏** | **部分**——下采样那部分可救，事件稀疏那部分可能物理缺失 | **存疑，取决于探针 A** |
+
+- 小目标失败是**架构性信息丢失**，条件注入（浅层高分辨率特征/原分辨率 spike）大概率能救回。
+- 远距离失败**一部分是物理性信息缺失**——远处 spike 事件本就稀疏，若原始数据远景 SNR 已太低，
+  那是传感器/数据上限，再精修也无中生有不出来。故探针 A（仅从 spike 回归远景）是不可绕过的
+  go/no-go：它测的正是远距离信息到底"没用好"还是"物理没有"。
+
+**(4) "两个都要"落在损失/门控，不在架构。**
+架构统一，但同时照顾两类难区靠三处设计（详见 §5.3）：
+- **复合加权损失**：深度加权（抓远）+ 边界/尺寸加权（抓小目标），不能只用远景加权（会淹没近处小目标）；
+- **不确定性门控是天然统一器**：小目标与远距离**都是主干高不确定区**，一个"只在低置信区精修"的
+  门控无需手写判断即自动同时覆盖两者；门控图须在**高分辨率**上算，否则糊掉小目标边界；
+- **条件源同供两类信息**：spike 条件编码器同时输出「高分辨率空间细节」（救小目标）与
+  「事件率/时间统计」（救远距离）。
+
+**(5) 潜在冲突（须预防）**：远景加权可能压过近处小目标（→加尺寸/边界权重补偿）；门控粒度太粗糊掉
+小目标（→高分辨率门控）；两类都放开 Δ 后可能拟合远景 GT 噪声（→近景强制 Δ→0 + 鲁棒损失）。
+
 ---
 
 ## 2. 文献支撑（一）：Flow/扩散用于深度估计与精修
@@ -190,7 +230,76 @@ abs_rel 能否低于主干 coarse 的 0.707。
 
 ---
 
-## 7. 结论与下一步（仅规划）
+## 7. 代码修改初步方案（仅设计，本次不改）
+
+以下映射到现有代码的具体锚点，供后续实现。**当前不动任何代码。** 所有改动遵循现有约定：
+config 开关默认关=旧行为，向后兼容。
+
+### 阶段 0 — 探针（先做，不碰主 flow）
+- **探针 A**（go/no-go）：新脚本 `scripts/diag_spike_farfield_probe_20260805.py`。
+  一个轻量 CNN 直接吃 raw spike（`item` 里的 spike tensor，主干输入前），只回归深度，
+  单独评 `_250/_500` 档 abs_rel/δ，对比 coarse 0.707。复用 `evaluation_DENSE.py` 同口径。
+- **探针 B**（中间层信息定位）：在 `S2DepthNet.forward`（`model/S2DepthNet.py:223` `encoded_xs = self.encoder(...)`
+  之后）挂 hook 取各层输出，各接一个 linear probe 回归远景深度，看哪层远景信息最丰富。
+  产出：选定接入 flow 的浅层索引。
+
+### 阶段 1 — spike 条件编码器 C_ψ（新模块）
+- **新增** `model/manifold_flow.py`：`class _SpikeConditionEncoder(nn.Module)`。
+  - 输入：raw spike（`num_bins_rgb`×224×224，见 `S2DepthNet.py:191 expected_channels`）
+    或其事件统计（逐像素计数/首末事件时间/时间质心，在 dataset 或 forward 里预计算）。
+  - 输出：与 latent 同空间分辨率（56×56 级、`latent_channels`=96）的条件图 `spike_cond`。
+  - 结构：几层 stride-conv 下采样到 latent 分辨率的小 CNN；为救小目标，保留一路
+    **高分辨率 skip** 或用较浅下采样。
+- **config 开关**：`manifold_flow.spike_condition = {enabled, in_stat_mode, out_channels}`，默认 `enabled=false`。
+
+### 阶段 2 — velocity_field 扩条件通道（最小侵入改动）
+- **锚点**：`_ConditionalVelocityField.__init__`（`model/manifold_flow.py:109`）当前
+  `in_channels = latent_channels*2 + 1`（= z_t ⊕ cond_latent ⊕ time_map）。
+- **改法**：扩为 `latent_channels*2 + 1 + spike_cond_ch (+ shallow_ch)`，`forward` 里把
+  `spike_cond`、可选 `proj(F_shallow)` 一起 `torch.cat` 进条件。
+- **浅层特征接入**：复用现有 `_fuse_encoder_features`（`manifold_flow.py`，`encoder_feature_scale`
+  当前=0 即关闭）——打开并接探针 B 选定层，或新增浅层专用 1×1 投影。
+- `ConditionedDepthManifoldFlow.__init__`（`:199` velocity_field 构造处）相应传入新通道数。
+- 前向 `forward(coarse_depth, encoder_features, ...)`（`:346`）需新增入参 `spike_raw`/`spike_cond`，
+  并从 `S2DepthNet.forward`（`:241` 调用处）把 spike 透传进来。
+
+### 阶段 3 — 复合定向损失（改 loss 组装，同时压两类难区）
+- **锚点**：`manifold_flow.py` 的 `_weighted_metric_l1`（现有，含 `far_gamma` 远景**降**权）
+  与 `forward` 里 `L_refined_metric`/`L_delta_reg` 组装处。
+- **新增权重**（config，默认关）：
+  - `far_upweight_gamma`：远景**加**权 `w=exp(+γ·target)`（与现有 far_downweight 反向）→抓远距离；
+  - `edge_weight`：边界/梯度幅值加权（`|∇GT|` 大处加权）→抓小目标；
+  - `near_delta_reg`：近景（target 小）区域对 `‖Δ‖²` 加重惩罚，强制近处 Δ→0→只放开难区。
+- 复合：`L = far_upweight·metric + edge_weight·metric_at_edges + near_delta_reg·‖Δ‖²_near`。
+
+### 阶段 4 — 不确定性门控残差（统一覆盖两类难区）
+- **锚点**：`manifold_flow.py:352-358` 的 `refined_depth = coarse_depth + decoded`。
+- **改法**：`refined = coarse + gate ⊙ Δ`，`gate∈[0,1]` 逐像素。
+  - gate 来源（二选一）：① velocity_field/新小头输出的置信度（sigmoid）；
+    ② 主干输出方差的代理。
+  - **门控图须在高分辨率**（decode 回 224² 后再 gate，或 gate 上采样），否则糊小目标边界。
+- **config**：`manifold_flow.residual_gate = {enabled, source}`，默认关（=当前无门控行为）。
+
+### 训练流程（复用现有两阶段，守住 coarse）
+- 仍用 latentfix 两阶段：**冻结主干 + 冻结 AE**（守住 coarse 0.595，避免 0731/0801 联合训污染）。
+- stage-2 可训集合从 `velocity_field + residual_decoder` 扩为
+  `+ C_ψ + gate头 + 浅层投影`。runner 复用 `run_stage2_batched_20260804.sh`（batch 化 + host-RAM
+  安全设置，见 [[reB-stage2-batching-speedup-0804]]），仅换 config。
+- 复用 stage-1 AE `ep29` 快照，无需重训 stage-1。
+
+### 评测（防档位陷阱）
+- 复用 `scripts/diag_export_coarse_refined_20260804.py`（已能同时导 coarse/refined）+
+  `evaluation_DENSE.py --crop_ymax224 --clip1000 --reg5.7`。
+- **判据锁定同一档**：主看 `_250/_500` 远景档 refined vs coarse 的 δ/abs_rel 增量，
+  兼看 total 档不退化。避免 `FLOW_DIAGNOSIS_AND_THEORY_20260804.md` §A.2 的档位混淆。
+
+### 改动风险控制
+- 每个 config 开关默认关=完全旧行为，可单独开启做消融（隔离 spike_cond / 浅层 / 门控 / 各损失的贡献）。
+- 主干始终冻结→最坏情况 Δ→0 或 gate→0，退化为 coarse（0.595），不劣化。
+
+---
+
+## 8. 结论与下一步（仅规划）
 
 **可行性判断**：方法层面有充分文献支撑且靶点明确，但**成败取决于 §4 探针 A 的信息存在性判据**，
 这是不可绕过的前置 gate。
