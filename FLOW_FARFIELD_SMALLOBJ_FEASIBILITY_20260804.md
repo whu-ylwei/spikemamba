@@ -83,23 +83,34 @@ flow 要学的事在两种情况下**数学形式完全相同**：给定不可�
 
 ## 2. 文献支撑（一）：Flow/扩散用于深度估计与精修
 
-> 注：以下引用的标题/年份/arXiv 以正式发表为准，落地成论文前需逐条核对。
+> 注：以下引用已经 web 检索核实（2026-08-04）。仅 Marigold（arXiv:2312.02145 数字）与
+> Hypercolumns（arXiv:1411.5752）的 ID 为高置信但未从 arXiv 摘要页复核，已在条目标注"待再核"；
+> 其余标题/作者/年份/venue 均已对齐 arXiv/CVF/NeurIPS/Springer。
 
 **Flow matching / rectified flow 基础**
-- Lipman et al., *Flow Matching for Generative Modeling*, ICLR 2023（arXiv:2210.02747）——
-  连续归一化流的仿真无关训练目标，本项目 velocity_field 回归即基于此。
-- Liu et al., *Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow*,
-  ICLR 2023（arXiv:2209.03003）——直线化 coarse→GT 路径（data coupling）的理论依据。
+- Lipman, Chen, Ben-Hamu, Nickel, Le, *Flow Matching for Generative Modeling*, ICLR 2023
+  （arXiv:2210.02747, 2022）——沿高斯概率路径的仿真无关向量场回归，扩散是其特例；
+  本项目 velocity_field 回归即基于此。
+- Liu, Gong, Liu, *Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified
+  Flow*, ICLR 2023（arXiv:2209.03003, 2022）——近直线 ODE 路径 + reflow，直线化 coarse→GT
+  路径（data coupling）的理论依据。
+- Tong et al., *Improving and Generalizing Flow-Based Generative Models with Minibatch OT*
+  (OT-CFM), TMLR 2024（arXiv:2302.00482）——minibatch-OT 耦合的广义条件流匹配。
 
 **Flow/扩散用于单目深度估计**
-- Gui et al., *DepthFM: Fast Monocular Depth Estimation with Flow Matching*, 2024
-  （arXiv:2403.13788）——本项目两阶段（固定 latent 流形→flow 精修）的直接范式来源。
+- Gui, Schusterbauer et al., *DepthFM: Fast Monocular Depth Estimation with Flow Matching*,
+  **AAAI 2025 (Oral)**（arXiv:2403.13788, 2024）——flow matching 把 image→depth 做传输、
+  用预训练扩散先验、少步采样。**本项目两阶段（固定 latent 流形→flow 精修）的直接范式来源。**
+  （arXiv 正式标题为 "Fast Monocular Depth Estimation with Flow Matching"，"DepthFM" 是通称。）
 - Ke et al., *Marigold: Repurposing Diffusion-Based Image Generators for Monocular Depth
-  Estimation*, CVPR 2024（arXiv:2312.02145）——扩散先验做深度，证明生成式模型在深度上的有效性。
+  Estimation*, CVPR 2024 (Oral)（arXiv:2312.02145）——SD 微调到仿射不变深度，证明生成式先验对深度有效。
 - Saxena et al., *The Surprising Effectiveness of Diffusion Models for Optical Flow and Monocular
-  Depth Estimation* (DDVM), NeurIPS 2023（arXiv:2306.01923）——本项目 L_flow 用 smooth-L1
-  （L1>L2）的依据。
-- Duan et al., *DDP: Diffusion-Based Dense Prediction*（arXiv:2303.17559）——条件扩散做稠密预测。
+  Depth Estimation* (DDVM), NeurIPS 2023（arXiv:2306.01923）——通用 image-to-image 扩散即达
+  SOTA 深度；本项目 L_flow 用 smooth-L1（L1>L2）的依据。
+- Ji et al., *DDP: Diffusion Model for Dense Visual Prediction*, ICCV 2023（arXiv:2303.17559）——
+  扩散入稠密预测，多步精修 + 不确定性。
+- Yang et al., *Depth Anything*（CVPR 2024, arXiv:2401.10891）/ *Depth Anything V2*
+  （NeurIPS 2024, arXiv:2406.09414）——基础 MDE 模型（作为 coarse-predictor 的语境参照）。
 
 **这些工作对本方案的意义**：证明"生成式精修 + 条件"在深度这种病态/歧义任务上能有效建模；
 DepthFM 的两阶段（先固定流形再 flow）正是本项目 latentfix 的蓝本。缺口在于它们的条件通常是
@@ -110,33 +121,54 @@ RGB 图像本身，而本项目的 coarse 已丢信息——故需 §3 的多源
 ## 3. 文献支撑（二）：多源条件 / 中间特征 / 事件相机 / 不确定性门控
 
 **特征/多源条件注入**
-- Zhang et al., *Adding Conditional Control to Text-to-Image Diffusion Models* (ControlNet),
-  ICCV 2023（arXiv:2302.05543）——外部条件旁路注入生成模型的成熟范式，对应本项目把
-  spike/浅层特征作为额外条件旁路喂入 velocity_field。
+- Zhang, Rao, Agrawala, *Adding Conditional Control to Text-to-Image Diffusion Models*
+  (ControlNet), ICCV 2023（arXiv:2302.05543）——zero-conv 可训副本把空间条件注入**冻结**扩散主干，
+  正是本项目"冻结主干 + 把 spike/浅层特征作条件旁路喂入 velocity_field"的工程范式。
 - Hariharan et al., *Hypercolumns for Object Segmentation and Fine-grained Localization*,
-  CVPR 2015（arXiv:1411.5752）——多层特征拼接保留细粒度/高分辨率信息，支撑"用浅层特征补远景细节"。
+  CVPR 2015（arXiv:1411.5752，ID 待再核）——多层特征拼接保留细粒度/高分辨率信息，
+  支撑"用浅层特征补小目标/远景细节"。
+- *Feature Fusion Coarse-to-Fine Residual Learning for Depth Completion*, AAAI 2021
+  （arXiv:2012.08270）——coarse 深度 + 融合多尺度特征上的残差学习，与本项目残差桥同构。
 
-**Mamba / 状态空间模型视觉主干**
-- Zhu et al., *Vision Mamba: Efficient Visual Representation Learning with Bidirectional State
-  Space Model* (Vim), ICML 2024（arXiv:2401.09417）。
+**Mamba / 状态空间模型视觉主干与深度**
+- Zhu et al., *Vision Mamba (Vim)*, ICML 2024（arXiv:2401.09417）。
 - Liu et al., *VMamba: Visual State Space Model*, NeurIPS 2024（arXiv:2401.10166）——
   本项目主干（双向 Mamba + U-Net 解码）的架构族。
+- *MambaDepth*（arXiv:2406.04532, 2024）——纯 Mamba 编解码自监督深度，Mamba 用于深度的先例。
 
-**事件/脉冲相机深度估计**
-- Hidalgo-Carrió et al., *Learning Monocular Dense Depth from Events* (E2Depth), 3DV 2020
-  （arXiv:2010.08350）——事件流单目稠密深度，证明事件/spike 原始流可直接驱动深度学习。
-- Zhu et al., *Unsupervised Event-based Learning of Optical Flow, Depth, and Egomotion*,
-  CVPR 2019——事件相机深度/运动联合学习。
-- （spike 相机方向）本项目 DENSE-spike 数据与 spike→depth 任务，raw spike 作为条件的动机源。
+**脉冲/事件相机深度估计（本项目任务的直接谱系）**
+- **Zhang, Yu et al., *Spike Transformer: Monocular Depth Estimation for Spiking Camera*,
+  ECCV 2022**（Springer 978-3-031-20071-7_3）——**首个在 raw spike 流上做单目深度的 transformer，
+  本项目主干与 DENSE-spike 任务的直接前身**。
+- Hidalgo-Carrió, Gehrig, Scaramuzza, *Learning Monocular Dense Depth from Events* (E2Depth),
+  3DV 2020（arXiv:2010.08350）——首个事件流单目稠密深度（递归编解码），**证明 raw 事件/spike
+  流含可直接学习的深度信息，支撑探针 A 的核心假设**。（arXiv 标题为 "Learning Monocular Dense
+  Depth from Events"，"E2Depth" 为通称。）
+- *SpikeStereoNet*（arXiv:2505.19487, 2025）——raw spike 立体深度 + 递归 SNN 精修。
+- *Unsupervised Spike Depth Estimation via Cross-modality Cross-domain Knowledge Transfer*
+  （arXiv:2208.12527, 2022）。
+
+**远景/小目标专项**
+- *VistaDepth*（arXiv:2504.15095, 2025）——谱调制 + 自适应重加权，**专门修扩散-MDE 的远景退化**，
+  与本项目远景增强目标直接相关。
+- *Long Range Object-Level Monocular Depth for UAVs*（arXiv:2302.08943, 2023）——
+  物体级估计做远处小目标深度。
+- Chen et al., *Structure-Aware Residual Pyramid Network*, IJCAI 2019（arXiv:1907.06023）——
+  逐层残差精修模块。
 
 **不确定性引导 / 置信度门控精修**
 - Kendall & Gal, *What Uncertainties Do We Need in Bayesian Deep Learning for Computer Vision?*,
-  NeurIPS 2017（arXiv:1703.04977）——逐像素不确定性估计，支撑 §5.3 的置信度门控残差。
-- Poggi et al., *On the Uncertainty of Self-Supervised Monocular Depth Estimation*, CVPR 2020
-  （arXiv:2005.06209）——深度不确定性建模，指导"只在低置信区精修"。
+  NeurIPS 2017（arXiv:1703.04977）——aleatoric/epistemic 不确定性框架，支撑 §5.3 的置信度门控残差。
+- **Uncertainty Guided Depth Fusion for Spike Camera**（arXiv:2208.12653, 2022）——
+  **不确定性图门控融合 mono+stereo spike 深度，直接对口本项目"spike + 不确定性门控"，是最贴近的先例**。
+- *Robust Depth Completion with Uncertainty-Driven Loss Functions*, AAAI 2022（arXiv:2112.07895）——
+  不确定性图 → 只在高不确定像素做残差精修。
+- Eldesokey et al., *Uncertainty-Aware CNNs for Depth Completion*, CVPR 2020（arXiv:2006.03349）。
 
-**这些工作对本方案的意义**：ControlNet/hypercolumn 提供多源条件注入的工程范式；事件相机深度
-证明 raw 事件流含可用深度信息（支撑探针 A 的假设）；不确定性门控提供"只修远景不扰近景"的机制。
+**这些工作对本方案的意义**：ControlNet 提供"冻结主干 + 条件旁路"的工程范式；Spike Transformer/
+E2Depth 证明 raw spike/事件流含可用深度信息（支撑探针 A）；VistaDepth 证明远景退化可被专项方法改善；
+"Uncertainty Guided Depth Fusion for Spike Camera" 是 spike + 不确定性门控的最直接先例，
+支撑 §5.3"只修难区不扰近景"的机制。
 
 ---
 
