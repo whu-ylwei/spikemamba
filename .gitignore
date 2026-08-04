@@ -7,6 +7,10 @@ __pycache__/
 venv/
 .idea/
 .ipynb_checkpoints/
+.claude/
+
+# Dataset symlink
+DENSE
 
 # Training logs, checkpoints, and outputs
 logs/
@@ -21,6 +25,13 @@ output1/
 
 # Local datasets and large artifacts
 DENSE-spike/
+DENSE/
+bivmamba_best/
+output/
+eval_reB_*/
+eval_diag_*/
+eval_mambassm_*/
+paper/
 wheels/
 *.whl
 *.zip

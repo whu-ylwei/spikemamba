@@ -197,6 +197,14 @@ def main():
                     help="Override optimizer lr (e.g. halved lr for the continue stage).")
     ap.add_argument("--num-workers", type=int, default=4,
                     help="DataLoader worker processes for parallel spike-file prefetch (I/O bound).")
+    ap.add_argument("--backbone-ckpt", default=None,
+                    help="0320 MambaSSM ckpt to warm-start + freeze the coarse-depth backbone "
+                         "(latent-manifold-fix stage 2). Loaded strict=False.")
+    ap.add_argument("--freeze-backbone", action="store_true",
+                    help="Freeze everything outside manifold_flow (coarse becomes a fixed input).")
+    ap.add_argument("--ae-ckpt", default=None,
+                    help="Stage-1 ae_pretrained.pth.tar (condition_encoder + recon_decoder) to load; "
+                         "pair with config freeze_autoencoder=true to fix the latent manifold.")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -232,6 +240,37 @@ def main():
     dev = torch.device("cuda:0")
 
     model = S2DepthTransformerUNetConv(m).to(dev)
+
+    # Latent-manifold-fix stage 2: warm-start + freeze the coarse backbone, and load the
+    # stage-1 pretrained autoencoder (encoder + recon_decoder). See LATENT_MANIFOLD_FIX_20260803.md.
+    if args.backbone_ckpt:
+        bck = torch.load(args.backbone_ckpt, map_location=dev, weights_only=False)
+        bsd = bck.get("state_dict", bck)
+        bsd = {(k[7:] if k.startswith("module.") else k): v for k, v in bsd.items()}
+        missing, unexpected = model.load_state_dict(bsd, strict=False)
+        other_missing = [k for k in missing if not k.startswith("manifold_flow.")]
+        assert not other_missing and not unexpected, \
+            f"backbone load mismatch: missing={other_missing[:3]} unexpected={unexpected[:3]}"
+        print(f"[{args.flow}] backbone warm-start from {args.backbone_ckpt} "
+              f"({len(bsd)} keys; {len(missing)} manifold keys at init)", flush=True)
+    if args.ae_ckpt:
+        ae = torch.load(args.ae_ckpt, map_location=dev, weights_only=False)
+        mf = model.manifold_flow
+        mf.condition_encoder.load_state_dict(ae["condition_encoder"])
+        mf.recon_decoder.load_state_dict(ae["recon_decoder"])
+        if not mf.share_encoder and "target_encoder" in ae:
+            mf.target_encoder.load_state_dict(ae["target_encoder"])
+        if mf.variational and "quant_conv" in ae:
+            mf.quant_conv.load_state_dict(ae["quant_conv"])
+        print(f"[{args.flow}] AE (encoder+recon_decoder{'+quant_conv' if mf.variational else ''}) "
+              f"loaded from {args.ae_ckpt} @ep{ae.get('epoch')}", flush=True)
+    if args.freeze_backbone:
+        for name, p in model.named_parameters():
+            if not name.startswith("manifold_flow."):
+                p.requires_grad_(False)
+        # manifold_flow's own freeze_autoencoder (config) further freezes encoder+recon_decoder.
+        print(f"[{args.flow}] backbone frozen (only manifold_flow trainable)", flush=True)
+
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[{args.flow}] trainable params: {n_params}", flush=True)
 
@@ -263,7 +302,7 @@ def main():
           f"val seqs: {n_val}/{len(val_ds)}", flush=True)
 
     lr = args.lr if args.lr is not None else cfg["optimizer"]["lr"]
-    opt = torch.optim.Adam(model.parameters(), lr=lr,
+    opt = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr,
                            weight_decay=cfg["optimizer"]["weight_decay"])
     print(f"[{args.flow}] lr={lr}", flush=True)
 

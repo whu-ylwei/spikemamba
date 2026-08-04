@@ -183,12 +183,76 @@ class ConditionedDepthManifoldFlow(nn.Module):
             self.target_encoder = self.condition_encoder
         else:
             self.target_encoder = _DepthDownsampleEncoder(1, base_channels, latent_channels)
-        self.target_decoder = _DepthUpsampleDecoder(latent_channels, base_channels)
+        # 0803 fix (BUG_residual_vs_reconstruction_conflict): split the single
+        # target_decoder into two independent heads so the reconstruction path
+        # (D_rec(E(GT)) ~= GT, absolute depth) and the rollout readout path
+        # (D_res(refined_latent) = delta, residual) no longer fight over one decoder.
+        #   split_decoders=False -> legacy single target_decoder (one-decoder-3-uses,
+        #                           key name unchanged so old checkpoints still load).
+        #   split_decoders=True  -> recon_decoder + residual_decoder, independent params.
+        self.split_decoders = bool(config.get("split_decoders", False))
+        if self.split_decoders:
+            self.recon_decoder = _DepthUpsampleDecoder(latent_channels, base_channels)
+            self.residual_decoder = _DepthUpsampleDecoder(latent_channels, base_channels)
+        else:
+            self.target_decoder = _DepthUpsampleDecoder(latent_channels, base_channels)
         self.velocity_field = _ConditionalVelocityField(
             latent_channels=latent_channels,
             hidden_channels=hidden_channels,
             num_resblocks=flow_resblocks,
         )
+
+        # 0803 (KL-VAE): make the autoencoder variational (LDM-style) so the latent
+        # manifold is continuous / hole-free (helps the flow integrate without drifting
+        # off-manifold). encoder output -> quant_conv -> (mean, logvar); reparameterize
+        # sample -> decoder. KL pulls q(z|x) toward N(0,I). Default off = deterministic AE.
+        self.variational = bool(config.get("variational", False))
+        self.kl_weight = float(config.get("kl_weight", 0.0))
+        if self.variational:
+            # 1x1 conv doubling channels into mean/logvar moments (LDM DiagonalGaussian).
+            self.quant_conv = nn.Conv2d(latent_channels, 2 * latent_channels, 1)
+        self._latent_channels = latent_channels
+
+        # 0803 (A-2b): optionally freeze the depth autoencoder so the flow runs on a
+        # fixed manifold instead of a moving target. Pair with a reconstruction-pretrained
+        # checkpoint; default False -> legacy joint training.
+        # With split_decoders the AE is (encoder + recon_decoder); the residual_decoder
+        # is a trainable readout head and stays unfrozen (DepthFM-style: freeze the VAE,
+        # train the flow + readout head).
+        self.freeze_autoencoder = bool(config.get("freeze_autoencoder", False))
+        if self.freeze_autoencoder:
+            for p in self.condition_encoder.parameters():
+                p.requires_grad_(False)
+            if not self.share_encoder:
+                for p in self.target_encoder.parameters():
+                    p.requires_grad_(False)
+            recon_head = self.recon_decoder if self.split_decoders else self.target_decoder
+            for p in recon_head.parameters():
+                p.requires_grad_(False)
+            if self.variational:
+                # quant_conv is part of the encoder (defines the manifold) -> freeze too.
+                for p in self.quant_conv.parameters():
+                    p.requires_grad_(False)
+
+    def _encode_latent(self, encoder, x, sample=True):
+        """Encode depth -> latent. Deterministic (variational=False): returns (z, None).
+        Variational: encoder feats -> quant_conv -> (mean, logvar); returns (z, kl) where
+        z is the reparameterized sample (or mean if sample=False) and kl is the per-batch
+        KL(q(z|x) || N(0,I)) mean. logvar clamped to [-30,20] for numerical safety (LDM)."""
+        feat = encoder(x)
+        if not self.variational:
+            return feat, None
+        mean, logvar = torch.chunk(self.quant_conv(feat), 2, dim=1)
+        logvar = torch.clamp(logvar, -30.0, 20.0)
+        if sample:
+            std = torch.exp(0.5 * logvar)
+            z = mean + std * torch.randn_like(std)
+        else:
+            z = mean
+        kl = 0.5 * torch.mean(
+            torch.sum(mean.pow(2) + logvar.exp() - 1.0 - logvar, dim=[1, 2, 3])
+        )
+        return z, kl
 
     def _fuse_encoder_features(self, condition_latent, encoder_features):
         if self.encoder_feature_scale == 0.0 or encoder_features is None:
@@ -241,6 +305,10 @@ class ConditionedDepthManifoldFlow(nn.Module):
         if self.start_from_coarse:
             # C1: start on the manifold at the coarse latent; the flow only refines.
             latent_state = condition_latent
+            if self.rollout_noise_std > 0:
+                # 0803: small Gaussian on the start point (Rectified Flow base-smoothing);
+                # only perturbs z0, condition_latent stays clean.
+                latent_state = latent_state + torch.randn_like(latent_state) * self.rollout_noise_std
         elif self.rollout_noise_std > 0:
             latent_state = torch.randn_like(condition_latent) * self.rollout_noise_std
         else:
@@ -261,11 +329,25 @@ class ConditionedDepthManifoldFlow(nn.Module):
                 latent_state = latent_state + velocity * step_size
         return latent_state
 
+    def _decode_residual(self, refined_latent):
+        """Rollout readout: latent -> depth increment (delta) in residual mode,
+        or absolute depth otherwise. Uses residual_decoder when decoders are split."""
+        if self.split_decoders:
+            return self.residual_decoder(refined_latent)
+        return self.target_decoder(refined_latent)
+
+    def _decode_recon(self, target_latent):
+        """Reconstruction path: E(GT) -> GT (absolute depth). Uses recon_decoder
+        when decoders are split; this head + encoder define the latent manifold."""
+        if self.split_decoders:
+            return self.recon_decoder(target_latent)
+        return self.target_decoder(target_latent)
+
     def forward(self, coarse_depth, encoder_features=None, target_depth=None, prev_latent_state=None):
-        condition_latent = self.condition_encoder(coarse_depth)
+        condition_latent, _ = self._encode_latent(self.condition_encoder, coarse_depth, sample=False)
         condition_latent = self._fuse_encoder_features(condition_latent, encoder_features)
         refined_latent = self._rollout_latent(condition_latent)
-        decoded = self.target_decoder(refined_latent)
+        decoded = self._decode_residual(refined_latent)
         flow_delta = decoded  # 5a: in residual mode this is the depth increment added to coarse.
         if self.residual_output:
             # C3: anchor to coarse; the decoder produces a depth increment (delta).
@@ -299,14 +381,17 @@ class ConditionedDepthManifoldFlow(nn.Module):
                     self.loss_weights["refined_metric"]
                     * _weighted_metric_l1(refined_depth, clean_target, valid_mask, self.far_downweight_gamma)
                 )
-            target_latent = self.target_encoder(clean_target)
-            reconstructed_target = self.target_decoder(target_latent)
+            target_latent, kl = self._encode_latent(self.target_encoder, clean_target, sample=True)
+            reconstructed_target = self._decode_recon(target_latent)
 
             if self.loss_weights["reconstruction"] > 0.0:
                 auxiliary_losses["L_rec"] = (
                     self.loss_weights["reconstruction"]
                     * _masked_l1(reconstructed_target, clean_target, valid_mask)
                 )
+            # KL(q(z|GT) || N(0,I)): pulls the latent toward a continuous Gaussian manifold.
+            if self.variational and self.kl_weight > 0.0 and kl is not None:
+                auxiliary_losses["L_kl"] = self.kl_weight * kl
 
             if self.data_coupling:
                 # C2: straight path from the coarse latent to the GT latent.
@@ -320,8 +405,9 @@ class ConditionedDepthManifoldFlow(nn.Module):
             target_velocity = target_latent - z0
             predicted_velocity = self.velocity_field(latent_state, condition_latent, time_value)
             if self.loss_weights["flow"] > 0.0:
+                # 0803: velocity regression uses smooth L1 (DDVM shows L1 > L2 for depth flow).
                 auxiliary_losses["L_flow"] = (
-                    self.loss_weights["flow"] * F.mse_loss(predicted_velocity, target_velocity)
+                    self.loss_weights["flow"] * F.smooth_l1_loss(predicted_velocity, target_velocity)
                 )
 
             auxiliary_outputs["target_reconstruction"] = reconstructed_target
